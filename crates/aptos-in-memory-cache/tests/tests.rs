@@ -108,7 +108,10 @@ mod tests {
         // Wait for eviction to occur
         tokio::time::sleep(Duration::from_micros(1)).await;
 
-        // assert_eq!(cache.total_size(), 6 * std::mem::size_of_val(&NotATransaction::new(0)));
+        assert_eq!(
+            cache.total_size(),
+            6 * std::mem::size_of_val(&NotATransaction::new(0))
+        );
 
         // Further inserts to ensure eviction continues correctly
         for i in 7..10 {
@@ -154,7 +157,10 @@ mod tests {
         // Wait for eviction to occur
         tokio::time::sleep(Duration::from_micros(1)).await;
 
-        // assert_eq!(cache.total_size(), 10 * std::mem::size_of_val(&NotATransaction::new(0)));
+        assert_eq!(
+            cache.total_size(),
+            10 * std::mem::size_of_val(&NotATransaction::new(0))
+        );
 
         tokio::time::sleep(Duration::from_micros(1)).await;
 

@@ -113,7 +113,7 @@ impl Cache<u64, Transaction> for InMemoryCache {
             .insert_with_size(key, Arc::new(value), size_in_bytes);
         self.eviction_start.store(key, Ordering::Relaxed);
         if self.cache.total_size() > self.metadata.size_config.cache_eviction_trigger_size_bytes {
-            self.insert_notify.notify_waiters();
+            self.insert_notify.notify_one();
         }
     }
 
@@ -251,6 +251,10 @@ fn spawn_eviction_task<C: SizedCache<Transaction> + 'static>(
                             // If we accidentally evict a newer transaction, we insert it back.
                             if value.key > watermark_value {
                                 cache.insert_with_size(value.key, value.value.clone(), value.size_in_bytes);
+                                highest_key.store(value.key, Ordering::Relaxed);
+                                // Notifying here will trigger another check from this function to see if we need to evict more.
+                                insert_notify.notify_one();
+                                break;
                             }
                         }
                         eviction_index = (eviction_index + 1) % metadata.size_config.cache_capacity;
