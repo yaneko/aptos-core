@@ -17,6 +17,7 @@ use aptos_types::{
         signature_verified_transaction::SignatureVerifiedTransaction, Transaction, TransactionInfo,
         Version,
     },
+    txn_provider::default::DefaultTxnProvider,
     write_set::WriteSet,
 };
 use aptos_vm::{AptosVM, VMExecutor};
@@ -29,6 +30,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Instant,
 };
+
 // Replay Verify controller is responsible for providing legit range with start and end versions.
 #[derive(Parser)]
 pub struct Opt {
@@ -271,11 +273,12 @@ impl Verifier {
         expected_epoch_writesets: &Vec<WriteSet>,
     ) -> Result<Vec<Error>> {
         let executed_outputs = AptosVM::execute_block_no_limit(
-            cur_txns
-                .iter()
-                .map(|txn| SignatureVerifiedTransaction::from(txn.clone()))
-                .collect::<Vec<_>>()
-                .as_slice(),
+            Arc::new(DefaultTxnProvider::new(
+                cur_txns
+                    .iter()
+                    .map(|txn| SignatureVerifiedTransaction::from(txn.clone()))
+                    .collect::<Vec<_>>(),
+            )),
             &self
                 .arc_db
                 .state_view_at_version(start_version.checked_sub(1))?,

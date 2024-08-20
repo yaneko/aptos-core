@@ -27,6 +27,7 @@ use aptos_types::{
         signature_verified_transaction::SignatureVerifiedTransaction, BlockOutput, ExecutionStatus,
         Transaction, TransactionAuxiliaryData, TransactionOutput, TransactionStatus,
     },
+    txn_provider::TxnProvider,
     vm_status::AbortLocation,
     write_set::{WriteOp, WriteSet, WriteSetMut},
 };
@@ -359,13 +360,14 @@ impl NativeExecutor {
 
 impl VMExecutor for NativeExecutor {
     fn execute_block(
-        transactions: &[SignatureVerifiedTransaction],
+        txn_provider: Arc<dyn TxnProvider<SignatureVerifiedTransaction>>,
         state_view: &(impl StateView + Sync),
         _onchain_config: BlockExecutorConfigFromOnchain,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
         let transaction_outputs = NATIVE_EXECUTOR_POOL
             .install(|| {
-                transactions
+                txn_provider
+                    .to_vec()
                     .par_iter()
                     .map(|txn| match &txn.expect_valid() {
                         Transaction::StateCheckpoint(_) => Self::handle_state_checkpoint(),

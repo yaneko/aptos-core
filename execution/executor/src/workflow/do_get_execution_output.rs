@@ -35,6 +35,7 @@ use aptos_types::{
         signature_verified_transaction::SignatureVerifiedTransaction, BlockEndInfo, BlockOutput,
         Transaction, TransactionOutput, TransactionStatus, Version,
     },
+    txn_provider::{default::DefaultTxnProvider, TxnProvider},
     write_set::{TransactionWrite, WriteSet},
 };
 use aptos_vm::VMExecutor;
@@ -52,8 +53,17 @@ impl DoGetExecutionOutput {
     ) -> Result<ExecutionOutput> {
         let out = match transactions {
             ExecutableTransactions::Unsharded(txns) => {
+                let txn_provider = DefaultTxnProvider::new(txns);
                 Self::by_transaction_execution_unsharded::<V>(
-                    txns,
+                    Arc::new(txn_provider),
+                    state_view,
+                    onchain_config,
+                    append_state_checkpoint_to_block,
+                )?
+            },
+            ExecutableTransactions::UnshardedBlocking(blocking_txn_provider) => {
+                Self::by_transaction_execution_unsharded::<V>(
+                    blocking_txn_provider,
                     state_view,
                     onchain_config,
                     append_state_checkpoint_to_block,
@@ -83,17 +93,22 @@ impl DoGetExecutionOutput {
     }
 
     fn by_transaction_execution_unsharded<V: VMExecutor>(
-        transactions: Vec<SignatureVerifiedTransaction>,
+        txn_provider: Arc<dyn TxnProvider<SignatureVerifiedTransaction>>,
         state_view: CachedStateView,
         onchain_config: BlockExecutorConfigFromOnchain,
         append_state_checkpoint_to_block: Option<HashValue>,
     ) -> Result<ExecutionOutput> {
-        let block_output = Self::execute_block::<V>(&transactions, &state_view, onchain_config)?;
+        let block_output =
+            Self::execute_block::<V>(txn_provider.clone(), &state_view, onchain_config)?;
         let (transaction_outputs, block_end_info) = block_output.into_inner();
 
         Parser::parse(
             state_view.next_version(),
-            transactions.into_iter().map(|t| t.into_inner()).collect(),
+            txn_provider
+                .to_vec()
+                .into_iter()
+                .map(|t| t.into_inner())
+                .collect(),
             transaction_outputs,
             state_view.into_state_cache(),
             block_end_info,
@@ -194,12 +209,12 @@ impl DoGetExecutionOutput {
     /// a vector of [TransactionOutput]s.
     #[cfg(not(feature = "consensus-only-perf-test"))]
     fn execute_block<V: VMExecutor>(
-        transactions: &[SignatureVerifiedTransaction],
+        txn_provider: Arc<dyn TxnProvider<SignatureVerifiedTransaction>>,
         state_view: &CachedStateView,
         onchain_config: BlockExecutorConfigFromOnchain,
     ) -> Result<BlockOutput<TransactionOutput>> {
         let _timer = OTHER_TIMERS.timer_with(&["vm_execute_block"]);
-        Ok(V::execute_block(transactions, state_view, onchain_config)?)
+        Ok(V::execute_block(txn_provider, state_view, onchain_config)?)
     }
 
     /// In consensus-only mode, executes the block of [Transaction]s using the
