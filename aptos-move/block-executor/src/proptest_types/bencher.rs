@@ -13,6 +13,7 @@ use crate::{
         },
     },
     txn_commit_hook::NoOpTransactionCommitHook,
+    txn_provider::default::DefaultTxnProvider,
 };
 use aptos_types::{
     block_executor::config::BlockExecutorConfig, contract_event::TransactionEvent,
@@ -37,10 +38,10 @@ pub struct Bencher<K, V, E> {
 }
 
 pub(crate) struct BencherState<
-    K: Hash + Clone + Debug + Eq + PartialOrd + Ord,
-    E: Send + Sync + Debug + Clone + TransactionEvent,
+    K: Hash + Clone + Debug + Eq + PartialOrd + Ord + Send + Sync + 'static,
+    E: Send + Sync + Debug + Clone + TransactionEvent + 'static,
 > {
-    transactions: Vec<MockTransaction<KeyType<K>, E>>,
+    txns_provider: DefaultTxnProvider<MockTransaction<KeyType<K>, E>>,
     baseline_output: BaselineOutput<KeyType<K>>,
 }
 
@@ -108,11 +109,12 @@ where
             .into_iter()
             .map(|txn_gen| txn_gen.materialize(&key_universe, (false, false)))
             .collect();
+        let txns_provider = DefaultTxnProvider::new(transactions.clone());
 
-        let baseline_output = BaselineOutput::generate(&transactions, None);
+        let baseline_output = BaselineOutput::generate(txns_provider.get_txns(), None);
 
         Self {
-            transactions,
+            txns_provider: DefaultTxnProvider::new(transactions),
             baseline_output,
         }
     }
@@ -138,8 +140,9 @@ where
             EmptyDataView<KeyType<K>>,
             NoOpTransactionCommitHook<MockOutput<KeyType<K>, E>, usize>,
             ExecutableTestType,
+            DefaultTxnProvider<MockTransaction<KeyType<K>, E>>,
         >::new(config, executor_thread_pool, global_module_cache, None)
-        .execute_transactions_parallel(&env, &self.transactions, &data_view);
+        .execute_transactions_parallel(&env, &self.txns_provider, &data_view);
 
         self.baseline_output.assert_parallel_output(&output);
     }

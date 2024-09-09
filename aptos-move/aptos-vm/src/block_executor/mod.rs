@@ -14,7 +14,7 @@ use aptos_aggregator::{
 use aptos_block_executor::{
     code_cache_global::ImmutableModuleCache, errors::BlockExecutionError, executor::BlockExecutor,
     task::TransactionOutput as BlockExecutorTransactionOutput,
-    txn_commit_hook::TransactionCommitHook, types::InputOutputKey,
+    txn_commit_hook::TransactionCommitHook, txn_provider::TxnProvider, types::InputOutputKey,
 };
 use aptos_infallible::Mutex;
 use aptos_types::{
@@ -451,9 +451,10 @@ impl BlockAptosVM {
     fn execute_block_on_thread_pool<
         S: StateView + Sync,
         L: TransactionCommitHook<Output = AptosTransactionOutput>,
+        TP: TxnProvider<SignatureVerifiedTransaction> + Sync,
     >(
         executor_thread_pool: Arc<rayon::ThreadPool>,
-        signature_verified_block: &[SignatureVerifiedTransaction],
+        signature_verified_block: &TP,
         state_view: &S,
         global_module_cache: Arc<
             ImmutableModuleCache<ModuleId, CompiledModule, Module, AptosModuleExtension>,
@@ -462,7 +463,7 @@ impl BlockAptosVM {
         transaction_commit_listener: Option<L>,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
         let _timer = BLOCK_EXECUTOR_EXECUTE_BLOCK_SECONDS.start_timer();
-        let num_txns = signature_verified_block.len();
+        let num_txns = signature_verified_block.num_txns();
         if state_view.id() != StateViewId::Miscellaneous {
             // Speculation is disabled in Miscellaneous context, which is used by testing and
             // can even lead to concurrent execute_block invocations, leading to errors on flush.
@@ -482,6 +483,7 @@ impl BlockAptosVM {
             S,
             L,
             ExecutableTestType,
+            TP,
         >::new(
             config,
             executor_thread_pool,
@@ -523,14 +525,15 @@ impl BlockAptosVM {
     pub fn execute_block_on_thread_pool_without_global_module_cache<
         S: StateView + Sync,
         L: TransactionCommitHook<Output = AptosTransactionOutput>,
+        TP: TxnProvider<SignatureVerifiedTransaction> + Sync,
     >(
         executor_thread_pool: Arc<rayon::ThreadPool>,
-        signature_verified_block: &[SignatureVerifiedTransaction],
+        signature_verified_block: &TP,
         state_view: &S,
         config: BlockExecutorConfig,
         transaction_commit_listener: Option<L>,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
-        Self::execute_block_on_thread_pool::<S, L>(
+        Self::execute_block_on_thread_pool::<S, L, TP>(
             executor_thread_pool,
             signature_verified_block,
             state_view,
@@ -544,13 +547,14 @@ impl BlockAptosVM {
     pub fn execute_block<
         S: StateView + Sync,
         L: TransactionCommitHook<Output = AptosTransactionOutput>,
+        TP: TxnProvider<SignatureVerifiedTransaction> + Sync,
     >(
-        signature_verified_block: &[SignatureVerifiedTransaction],
+        signature_verified_block: &TP,
         state_view: &S,
         config: BlockExecutorConfig,
         transaction_commit_listener: Option<L>,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
-        Self::execute_block_on_thread_pool::<S, L>(
+        Self::execute_block_on_thread_pool::<S, L, TP>(
             Arc::clone(&RAYON_EXEC_POOL),
             signature_verified_block,
             state_view,

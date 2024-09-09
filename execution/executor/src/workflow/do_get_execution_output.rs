@@ -6,6 +6,9 @@ use crate::{
     metrics::{EXECUTOR_ERRORS, OTHER_TIMERS},
 };
 use anyhow::{anyhow, Result};
+use aptos_block_executor::txn_provider::default::DefaultTxnProvider;
+#[cfg(feature = "consensus-only-perf-test")]
+use aptos_block_executor::txn_provider::TxnProvider;
 use aptos_crypto::HashValue;
 use aptos_executor_service::{
     local_executor_helper::SHARDED_BLOCK_EXECUTOR,
@@ -19,6 +22,8 @@ use aptos_experimental_runtimes::thread_manager::THREAD_MANAGER;
 use aptos_logger::prelude::*;
 use aptos_metrics_core::TimerHelper;
 use aptos_storage_interface::cached_state_view::{CachedStateView, StateCache};
+#[cfg(feature = "consensus-only-perf-test")]
+use aptos_types::transaction::ExecutionStatus;
 use aptos_types::{
     block_executor::{
         config::BlockExecutorConfigFromOnchain,
@@ -91,13 +96,18 @@ impl DoGetExecutionOutput {
         onchain_config: BlockExecutorConfigFromOnchain,
         append_state_checkpoint_to_block: Option<HashValue>,
     ) -> Result<ExecutionOutput> {
+        let txn_provider = DefaultTxnProvider::new(transactions);
         let block_output =
-            Self::execute_block::<V>(executor, &transactions, &state_view, onchain_config)?;
+            Self::execute_block::<V>(executor, &txn_provider, &state_view, onchain_config)?;
         let (transaction_outputs, block_end_info) = block_output.into_inner();
 
         Parser::parse(
             state_view.next_version(),
-            transactions.into_iter().map(|t| t.into_inner()).collect(),
+            txn_provider
+                .txns
+                .into_iter()
+                .map(|t| Arc::into_inner(t).unwrap().into_inner())
+                .collect(),
             transaction_outputs,
             state_view.into_state_cache(),
             block_end_info,
@@ -199,12 +209,12 @@ impl DoGetExecutionOutput {
     #[cfg(not(feature = "consensus-only-perf-test"))]
     fn execute_block<V: VMBlockExecutor>(
         executor: &V,
-        transactions: &[SignatureVerifiedTransaction],
+        txn_provider: &DefaultTxnProvider<SignatureVerifiedTransaction>,
         state_view: &CachedStateView,
         onchain_config: BlockExecutorConfigFromOnchain,
     ) -> Result<BlockOutput<TransactionOutput>> {
         let _timer = OTHER_TIMERS.timer_with(&["vm_execute_block"]);
-        Ok(executor.execute_block(transactions, state_view, onchain_config)?)
+        Ok(executor.execute_block(txn_provider, state_view, onchain_config)?)
     }
 
     /// In consensus-only mode, executes the block of [Transaction]s using the
@@ -214,7 +224,7 @@ impl DoGetExecutionOutput {
     #[cfg(feature = "consensus-only-perf-test")]
     fn execute_block<V: VMBlockExecutor>(
         executor: &V,
-        transactions: &[SignatureVerifiedTransaction],
+        txn_provider: &DefaultTxnProvider<SignatureVerifiedTransaction>,
         state_view: &CachedStateView,
         onchain_config: BlockExecutorConfigFromOnchain,
     ) -> Result<BlockOutput<TransactionOutput>> {
@@ -227,11 +237,10 @@ impl DoGetExecutionOutput {
         let transaction_outputs = match state_view.id() {
             // this state view ID implies a genesis block in non-test cases.
             StateViewId::Miscellaneous => {
-                executor.execute_block(transactions, state_view, onchain_config)?
+                executor.execute_block(txn_provider, state_view, onchain_config)?
             },
             _ => BlockOutput::new(
-                transactions
-                    .iter()
+                (0..txn_provider.num_txns())
                     .map(|_| {
                         TransactionOutput::new(
                             WriteSet::default(),
@@ -242,6 +251,7 @@ impl DoGetExecutionOutput {
                         )
                     })
                     .collect::<Vec<_>>(),
+                None,
             ),
         };
         Ok(transaction_outputs)

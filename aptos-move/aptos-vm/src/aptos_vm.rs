@@ -27,7 +27,10 @@ use crate::{
     VMBlockExecutor, VMValidator,
 };
 use anyhow::anyhow;
-use aptos_block_executor::txn_commit_hook::NoOpTransactionCommitHook;
+use aptos_block_executor::{
+    txn_commit_hook::NoOpTransactionCommitHook,
+    txn_provider::{default::DefaultTxnProvider, TxnProvider},
+};
 use aptos_crypto::HashValue;
 use aptos_framework::{
     natives::{code::PublishRequest, randomness::RandomnessContext},
@@ -2793,7 +2796,7 @@ impl VMBlockExecutor for AptosVMBlockExecutor {
     /// transaction output.
     fn execute_block(
         &self,
-        transactions: &[SignatureVerifiedTransaction],
+        txn_provider: &DefaultTxnProvider<SignatureVerifiedTransaction>,
         state_view: &(impl StateView + Sync),
         onchain_config: BlockExecutorConfigFromOnchain,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
@@ -2807,15 +2810,16 @@ impl VMBlockExecutor for AptosVMBlockExecutor {
         info!(
             log_context,
             "Executing block, transaction count: {}",
-            transactions.len()
+            txn_provider.num_txns()
         );
 
-        let count = transactions.len();
+        let count = txn_provider.num_txns();
         let ret = BlockAptosVM::execute_block::<
             _,
             NoOpTransactionCommitHook<AptosTransactionOutput, VMStatus>,
+            DefaultTxnProvider<SignatureVerifiedTransaction>,
         >(
-            transactions,
+            txn_provider,
             state_view,
             BlockExecutorConfig {
                 local: BlockExecutorLocalConfig {
