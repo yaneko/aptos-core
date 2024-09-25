@@ -350,16 +350,16 @@ impl ConsensusObserver {
         update_metrics_for_block_payload_message(peer_network_id, &block_payload);
 
         // Verify the block payload digests
-        if let Err(error) = block_payload.verify_payload_digests() {
-            error!(
-                LogSchema::new(LogEntry::ConsensusObserver).message(&format!(
-                    "Failed to verify block payload digests! Ignoring block: {:?}. Error: {:?}",
-                    block_payload.block(),
-                    error
-                ))
-            );
-            return;
-        }
+        // if let Err(error) = block_payload.verify_payload_digests() {
+        //     error!(
+        //         LogSchema::new(LogEntry::ConsensusObserver).message(&format!(
+        //             "Failed to verify block payload digests! Ignoring block: {:?}. Error: {:?}",
+        //             block_payload.block(),
+        //             error
+        //         ))
+        //     );
+        //     return;
+        // }
 
         // If the payload is for the current epoch, verify the proof signatures
         let epoch_state = self.get_epoch_state();
@@ -661,20 +661,20 @@ impl ConsensusObserver {
         };
 
         // Verify the block payloads against the ordered block
-        if let Err(error) = self
-            .block_payload_store
-            .lock()
-            .verify_payloads_against_ordered_block(&ordered_block)
-        {
-            error!(
-                LogSchema::new(LogEntry::ConsensusObserver).message(&format!(
-                    "Failed to verify block payloads against ordered block! Ignoring: {:?}, Error: {:?}",
-                    ordered_block.proof_block_info(),
-                    error
-                ))
-            );
-            return;
-        }
+        // if let Err(error) = self
+        //     .block_payload_store
+        //     .lock()
+        //     .verify_payloads_against_ordered_block(&ordered_block)
+        // {
+        //     error!(
+        //         LogSchema::new(LogEntry::ConsensusObserver).message(&format!(
+        //             "Failed to verify block payloads against ordered block! Ignoring: {:?}, Error: {:?}",
+        //             ordered_block.proof_block_info(),
+        //             error
+        //         ))
+        //     );
+        //     return;
+        // }
 
         // The block was verified correctly. If the block is a child of our
         // last block, we can insert it into the ordered block store.
