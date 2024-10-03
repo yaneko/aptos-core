@@ -326,7 +326,7 @@ impl Features {
     pub fn is_loader_v2_enabled(&self) -> bool {
         self.is_enabled(FeatureFlag::ENABLE_LOADER_V2)
     }
-
+    
     pub fn is_native_memory_operations_enabled(&self) -> bool {
         self.is_enabled(FeatureFlag::NATIVE_MEMORY_OPERATIONS)
     }
