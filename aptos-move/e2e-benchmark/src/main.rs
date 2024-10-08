@@ -115,20 +115,20 @@ LiquidityPoolSwap { is_stable: false }	6	0.925	1.001	535.3
         }),
         (6871, EntryPoints::EmitEvents { count: 1000 }),
         // long vectors with small elements
-        (15890, EntryPoints::VectorSplitOffAppend {
+        (15890, EntryPoints::VectorTrimAppend {
             // baseline, only vector creation
             vec_len: 3000,
             element_len: 1,
             index: 0,
             repeats: 0,
         }),
-        (38047, EntryPoints::VectorSplitOffAppend {
+        (38047, EntryPoints::VectorTrimAppend {
             vec_len: 3000,
             element_len: 1,
             index: 100,
             repeats: 1000,
         }),
-        (25923, EntryPoints::VectorSplitOffAppend {
+        (25923, EntryPoints::VectorTrimAppend {
             vec_len: 3000,
             element_len: 1,
             index: 2990,
@@ -154,14 +154,14 @@ LiquidityPoolSwap { is_stable: false }	6	0.925	1.001	535.3
             repeats: 1000,
         }),
         // vectors with large elements
-        (654, EntryPoints::VectorSplitOffAppend {
+        (654, EntryPoints::VectorTrimAppend {
             // baseline, only vector creation
             vec_len: 100,
             element_len: 100,
             index: 0,
             repeats: 0,
         }),
-        (11147, EntryPoints::VectorSplitOffAppend {
+        (11147, EntryPoints::VectorTrimAppend {
             vec_len: 100,
             element_len: 100,
             index: 10,

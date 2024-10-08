@@ -227,7 +227,7 @@ pub enum EntryPoints {
         num_objects: u64,
         object_payload_size: u64,
     },
-    VectorSplitOffAppend {
+    VectorTrimAppend {
         vec_len: u64,
         element_len: u64,
         index: u64,
@@ -322,7 +322,7 @@ impl EntryPoints {
             | EntryPoints::ModifyGlobalBoundedAggV2 { .. }
             | EntryPoints::CreateObjects { .. }
             | EntryPoints::CreateObjectsConflict { .. }
-            | EntryPoints::VectorSplitOffAppend { .. }
+            | EntryPoints::VectorTrimAppend { .. }
             | EntryPoints::VectorRemoveInsert { .. }
             | EntryPoints::VectorRangeMove { .. }
             | EntryPoints::TokenV1InitializeCollection
@@ -383,7 +383,7 @@ impl EntryPoints {
             EntryPoints::CreateObjects { .. } | EntryPoints::CreateObjectsConflict { .. } => {
                 "objects"
             },
-            EntryPoints::VectorSplitOffAppend { .. }
+            EntryPoints::VectorTrimAppend { .. }
             | EntryPoints::VectorRemoveInsert { .. }
             | EntryPoints::VectorRangeMove { .. } => "vector_example",
             EntryPoints::TokenV1InitializeCollection
@@ -568,7 +568,7 @@ impl EntryPoints {
                     bcs::to_bytes(other.expect("Must provide other")).unwrap(),
                 ],
             ),
-            EntryPoints::VectorSplitOffAppend {
+            EntryPoints::VectorTrimAppend {
                 vec_len,
                 element_len,
                 index,
@@ -582,8 +582,8 @@ impl EntryPoints {
             } => get_payload(
                 module_id,
                 ident_str!(
-                    if let EntryPoints::VectorSplitOffAppend { .. } = self {
-                        "test_split_off_append"
+                    if let EntryPoints::VectorTrimAppend { .. } = self {
+                        "test_trim_append"
                     } else {
                         "test_remove_insert"
                     }
@@ -880,7 +880,7 @@ impl EntryPoints {
             EntryPoints::CreateObjects { .. } | EntryPoints::CreateObjectsConflict { .. } => {
                 AutomaticArgs::Signer
             },
-            EntryPoints::VectorSplitOffAppend { .. }
+            EntryPoints::VectorTrimAppend { .. }
             | EntryPoints::VectorRemoveInsert { .. }
             | EntryPoints::VectorRangeMove { .. } => AutomaticArgs::None,
             EntryPoints::TokenV1InitializeCollection
