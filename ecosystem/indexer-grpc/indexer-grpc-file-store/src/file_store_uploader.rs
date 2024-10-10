@@ -4,14 +4,10 @@
 use crate::metrics::{METADATA_UPLOAD_FAILURE_COUNT, PROCESSED_VERSIONS_COUNT};
 use anyhow::{ensure, Context, Result};
 use aptos_indexer_grpc_utils::{
-    cache_operator::CacheOperator,
-    compression_util::{FileStoreMetadata, StorageFormat, FILE_ENTRY_TRANSACTION_COUNT},
+    compression_util::{FileStoreMetadata, FILE_ENTRY_TRANSACTION_COUNT},
     config::IndexerGrpcFileStoreConfig,
-    counters::{log_grpc_step, IndexerGrpcStep},
     file_store_operator::FileStoreOperator,
-    types::RedisUrl,
 };
-use aptos_moving_average::MovingAverage;
 use std::time::Duration;
 use tracing::debug;
 
@@ -20,44 +16,16 @@ const AHEAD_OF_CACHE_SLEEP_DURATION_IN_MILLIS: u64 = 100;
 const SERVICE_TYPE: &str = "file_worker";
 const MAX_CONCURRENT_BATCHES: usize = 50;
 
-/// Processor tails the data in cache and stores the data in file store.
-pub struct Processor {
-    cache_operator: CacheOperator<redis::aio::ConnectionManager>,
+pub struct FileStoreUploader {
     file_store_operator: Box<dyn FileStoreOperator>,
     chain_id: u64,
 }
 
-impl Processor {
+impl FileStoreUploader {
     pub async fn new(
-        redis_main_instance_address: RedisUrl,
-        file_store_config: IndexerGrpcFileStoreConfig,
+        file_store_config: &IndexerGrpcFileStoreConfig,
         chain_id: u64,
-        enable_cache_compression: bool,
     ) -> Result<Self> {
-        let cache_storage_format = if enable_cache_compression {
-            StorageFormat::Lz4CompressedProto
-        } else {
-            StorageFormat::Base64UncompressedProto
-        };
-
-        // Connection to redis is a hard dependency for file store processor.
-        let conn = redis::Client::open(redis_main_instance_address.0.clone())
-            .with_context(|| {
-                format!(
-                    "Create redis client for {} failed",
-                    redis_main_instance_address.0
-                )
-            })?
-            .get_tokio_connection_manager()
-            .await
-            .with_context(|| {
-                format!(
-                    "Create redis connection to {} failed.",
-                    redis_main_instance_address.0
-                )
-            })?;
-        let mut cache_operator = CacheOperator::new(conn, cache_storage_format);
-
         let mut file_store_operator: Box<dyn FileStoreOperator> = file_store_config.create();
         file_store_operator.verify_storage_bucket_existence().await;
         let file_store_metadata: Option<FileStoreMetadata> =
@@ -82,22 +50,7 @@ impl Processor {
         let metadata = file_store_operator.get_file_store_metadata().await.unwrap();
 
         ensure!(metadata.chain_id == chain_id, "Chain ID mismatch.");
-        let batch_start_version = metadata.version;
-        // Cache config in the cache
-        cache_operator.cache_setup_if_needed().await?;
-        match cache_operator.get_chain_id().await? {
-            Some(id) => {
-                ensure!(id == chain_id, "Chain ID mismatch.");
-            },
-            None => {
-                cache_operator.set_chain_id(chain_id).await?;
-            },
-        }
-        cache_operator
-            .update_file_store_latest_version(batch_start_version)
-            .await?;
         Ok(Self {
-            cache_operator,
             file_store_operator,
             chain_id,
         })
@@ -122,7 +75,6 @@ impl Processor {
 
         let mut batch_start_version = metadata.version;
 
-        let mut tps_calculator = MovingAverage::new(10_000);
         loop {
             let latest_loop_time = std::time::Instant::now();
             let cache_worker_latest = self.cache_operator.get_latest_version().await?.unwrap();
@@ -164,18 +116,6 @@ impl Processor {
                         .await
                         .unwrap();
                     let last_transaction = transactions.last().unwrap().clone();
-                    log_grpc_step(
-                        SERVICE_TYPE,
-                        IndexerGrpcStep::FilestoreFetchTxns,
-                        Some(start_version as i64),
-                        Some((start_version + FILE_ENTRY_TRANSACTION_COUNT - 1) as i64),
-                        None,
-                        None,
-                        Some(fetch_start_time.elapsed().as_secs_f64()),
-                        None,
-                        Some(FILE_ENTRY_TRANSACTION_COUNT as i64),
-                        None,
-                    );
                     for (i, txn) in transactions.iter().enumerate() {
                         assert_eq!(txn.version, start_version + i as u64);
                     }
@@ -184,18 +124,6 @@ impl Processor {
                         .upload_transaction_batch(chain_id, transactions)
                         .await
                         .unwrap();
-                    log_grpc_step(
-                        SERVICE_TYPE,
-                        IndexerGrpcStep::FilestoreUploadTxns,
-                        Some(start_version as i64),
-                        Some((start_version + FILE_ENTRY_TRANSACTION_COUNT - 1) as i64),
-                        None,
-                        None,
-                        Some(upload_start_time.elapsed().as_secs_f64()),
-                        None,
-                        Some(FILE_ENTRY_TRANSACTION_COUNT as i64),
-                        None,
-                    );
 
                     (start, end, last_transaction)
                 });
@@ -251,13 +179,7 @@ impl Processor {
             );
             let size = last_version - first_version + 1;
             PROCESSED_VERSIONS_COUNT.inc_by(size);
-            tps_calculator.tick_now(size);
 
-            // Update filestore metadata. First do it in cache for performance then update metadata file
-            let start_metadata_upload_time = std::time::Instant::now();
-            self.cache_operator
-                .update_file_store_latest_version(batch_start_version)
-                .await?;
             while self
                 .file_store_operator
                 .update_file_store_metadata_with_timeout(chain_id, batch_start_version)
@@ -271,34 +193,10 @@ impl Processor {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 METADATA_UPLOAD_FAILURE_COUNT.inc();
             }
-            log_grpc_step(
-                SERVICE_TYPE,
-                IndexerGrpcStep::FilestoreUpdateMetadata,
-                Some(first_version as i64),
-                Some(last_version as i64),
-                None,
-                None,
-                Some(start_metadata_upload_time.elapsed().as_secs_f64()),
-                None,
-                Some(size as i64),
-                None,
-            );
 
             let start_version_timestamp = first_version_encoded.timestamp;
             let end_version_timestamp = last_version_encoded.timestamp;
             let full_loop_duration = latest_loop_time.elapsed().as_secs_f64();
-            log_grpc_step(
-                SERVICE_TYPE,
-                IndexerGrpcStep::FilestoreProcessedBatch,
-                Some(first_version as i64),
-                Some(last_version as i64),
-                start_version_timestamp.as_ref(),
-                end_version_timestamp.as_ref(),
-                Some(full_loop_duration),
-                None,
-                Some(size as i64),
-                None,
-            );
         }
     }
 }

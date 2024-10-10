@@ -18,6 +18,7 @@ aptos-indexer-grpc-server-framework = { workspace = true }
 aptos-indexer-grpc-utils = { workspace = true }
 aptos-metrics-core = { workspace = true }
 aptos-moving-average = { workspace = true }
+aptos-protos = { workspace = true }
 async-trait = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }
@@ -25,6 +26,7 @@ once_cell = { workspace = true }
 redis = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
 tracing = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
