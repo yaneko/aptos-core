@@ -260,10 +260,7 @@ impl SignedBatchInfo {
             );
         }
 
-        // daniel hack
-        Ok(())
-
-        // Ok(validator.verify(self.signer, &self.info, &self.signature)?)
+        Ok(validator.verify(self.signer, &self.info, &self.signature)?)
     }
 
     pub fn signature(&self) -> &bls12381::Signature {
