@@ -31,6 +31,7 @@ use std::sync::{
 const MAX_STRUCT_NAME_INDEX_MAP_SIZE: usize = 100_000;
 
 /// The maximum size of [CrossBlockModuleCache]. Checked at block boundaries.
+#[allow(dead_code)]
 const MAX_CROSS_BLOCK_MODULE_CACHE_SIZE: usize = 100_000;
 
 /// A cached environment that can be persisted across blocks. Used by block executor only.
@@ -87,6 +88,7 @@ struct CrossBlockModuleCacheEntry {
 
 impl CrossBlockModuleCacheEntry {
     /// Returns a new valid cache entry. Panics if provided module entry is not verified.
+    #[allow(dead_code)]
     fn new(entry: ModuleCacheEntry) -> Self {
         assert!(entry.is_verified());
         Self {
@@ -163,31 +165,31 @@ impl CrossBlockModuleCache {
     /// Adds new verified entries from block-level cache to the cross-block cache. Flushes the
     /// cache if its size is too large. Should only be called at block end.
     pub(crate) fn populate_from_sync_code_cache_at_block_end(
-        code_cache: &SyncCodeCache<ModuleId, ModuleCacheEntry, ScriptCacheEntry>,
+        _code_cache: &SyncCodeCache<ModuleId, ModuleCacheEntry, ScriptCacheEntry>,
     ) {
-        let mut cache = CROSS_BLOCK_MODULE_CACHE.acquire();
-        if cache.len() > MAX_CROSS_BLOCK_MODULE_CACHE_SIZE {
-            cache.clear();
-        }
-
-        code_cache.module_cache().filter_into(
-            cache.dereference_mut(),
-            |e| e.is_verified(),
-            |e| CrossBlockModuleCacheEntry::new(e.clone()),
-        );
+        // let mut cache = CROSS_BLOCK_MODULE_CACHE.acquire();
+        // if cache.len() > MAX_CROSS_BLOCK_MODULE_CACHE_SIZE {
+        //     cache.clear();
+        // }
+        //
+        // code_cache.module_cache().filter_into(
+        //     cache.dereference_mut(),
+        //     |e| e.is_verified(),
+        //     |e| CrossBlockModuleCacheEntry::new(e.clone()),
+        // );
     }
 
     /// Same as [Self::populate_from_sync_code_cache_at_block_end], but only used by sequential
     /// execution.
-    pub(crate) fn populate_from_unsync_code_cache_at_block_end(code_cache: &UnsyncCodeCache) {
-        let mut cache = CROSS_BLOCK_MODULE_CACHE.acquire();
-        if cache.len() > MAX_CROSS_BLOCK_MODULE_CACHE_SIZE {
-            cache.clear();
-        }
-
-        code_cache.collect_verified_entries_into(cache.dereference_mut(), |e| {
-            CrossBlockModuleCacheEntry::new(e.clone())
-        });
+    pub(crate) fn populate_from_unsync_code_cache_at_block_end(_code_cache: &UnsyncCodeCache) {
+        // let mut cache = CROSS_BLOCK_MODULE_CACHE.acquire();
+        // if cache.len() > MAX_CROSS_BLOCK_MODULE_CACHE_SIZE {
+        //     cache.clear();
+        // }
+        //
+        // code_cache.collect_verified_entries_into(cache.dereference_mut(), |e| {
+        //     CrossBlockModuleCacheEntry::new(e.clone())
+        // });
     }
 
     /// Returns true if the module is stored in cross-block cache and is valid.
