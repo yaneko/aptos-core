@@ -97,6 +97,8 @@ pub enum FeatureFlag {
     TRANSACTION_SIMULATION_ENHANCEMENT = 78,
     COLLECTION_OWNER = 79,
     ENABLE_LOADER_V2 = 81,
+    /// covers mem::swap and vector::move_range
+    NATIVE_MEMORY_OPERATIONS = 82,
 }
 
 impl FeatureFlag {
@@ -176,6 +178,7 @@ impl FeatureFlag {
             FeatureFlag::TRANSACTION_SIMULATION_ENHANCEMENT,
             // TODO(loader_v2): Enable V2 loader.
             // FeatureFlag::ENABLE_LOADER_V2,
+            FeatureFlag::NATIVE_MEMORY_OPERATIONS,
         ]
     }
 }
@@ -320,8 +323,13 @@ impl Features {
         self.is_enabled(FeatureFlag::TRANSACTION_SIMULATION_ENHANCEMENT)
     }
 
+<<<<<<< HEAD
     pub fn is_loader_v2_enabled(&self) -> bool {
         self.is_enabled(FeatureFlag::ENABLE_LOADER_V2)
+=======
+    pub fn is_native_memory_operations_enabled(&self) -> bool {
+        self.is_enabled(FeatureFlag::NATIVE_MEMORY_OPERATIONS)
+>>>>>>> aadd3d8541 (unit test and mark dirty)
     }
 
     pub fn get_max_identifier_size(&self) -> u64 {
