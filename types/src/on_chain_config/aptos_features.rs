@@ -323,13 +323,12 @@ impl Features {
         self.is_enabled(FeatureFlag::TRANSACTION_SIMULATION_ENHANCEMENT)
     }
 
-<<<<<<< HEAD
     pub fn is_loader_v2_enabled(&self) -> bool {
         self.is_enabled(FeatureFlag::ENABLE_LOADER_V2)
-=======
+    }
+
     pub fn is_native_memory_operations_enabled(&self) -> bool {
         self.is_enabled(FeatureFlag::NATIVE_MEMORY_OPERATIONS)
->>>>>>> aadd3d8541 (unit test and mark dirty)
     }
 
     pub fn get_max_identifier_size(&self) -> u64 {

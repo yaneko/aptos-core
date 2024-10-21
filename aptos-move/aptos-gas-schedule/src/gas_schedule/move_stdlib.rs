@@ -4,7 +4,7 @@
 //! This module defines the gas parameters for Move Stdlib.
 
 use crate::{
-    gas_feature_versions::{RELEASE_V1_18, RELEASE_V1_23},
+    gas_feature_versions::{RELEASE_V1_18, RELEASE_V1_24},
     gas_schedule::NativeGasParameters,
 };
 use aptos_gas_algebra::{InternalGas, InternalGasPerByte};
@@ -40,6 +40,6 @@ crate::gas_schedule::macros::define_gas_parameters!(
         [bcs_serialized_size_per_byte_serialized: InternalGasPerByte, { RELEASE_V1_18.. => "bcs.serialized_size.per_byte_serialized" }, 36],
         [bcs_serialized_size_failure: InternalGas, { RELEASE_V1_18.. => "bcs.serialized_size.failure" }, 3676],
 
-        [mem_swap_base: InternalGas, { RELEASE_V1_23.. => "mem.swap.base" }, 1500],
+        [mem_swap_base: InternalGas, { RELEASE_V1_24.. => "mem.swap.base" }, 1500],
     ]
 );
