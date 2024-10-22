@@ -10,6 +10,7 @@ use std::{
     fmt,
     fmt::{Debug, Formatter},
 };
+use std::ops::Div;
 
 pub fn total_weight_lower_bound(validator_stakes: &[u64]) -> usize {
     // Each validator has at least 1 weight.
@@ -45,6 +46,14 @@ pub fn total_weight_upper_bound(
     ((n / two + two) / (reconstruct_threshold_in_stake_ratio - secrecy_threshold_in_stake_ratio))
         .ceil()
         .to_num::<usize>()
+}
+
+#[test]
+fn hihi() {
+    let n = U64F64::from_num(7);
+    let two = U64F64::from_num(3);
+    let x = n / two;
+    println!("x={x}");
 }
 
 #[derive(Clone, Debug)]
@@ -280,6 +289,12 @@ impl DKGRoundingProfile {
             fast_secrecy_threshold_in_stake_ratio,
         )
     }
+}
+
+#[test]
+fn hihihi() {
+    let x = U64F64::from_bits(12174851088648304066);
+    println!("x={x}");
 }
 
 fn is_valid_profile(
