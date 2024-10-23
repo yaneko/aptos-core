@@ -10,7 +10,6 @@ use std::{
     fmt,
     fmt::{Debug, Formatter},
 };
-use std::ops::Div;
 
 pub fn total_weight_lower_bound(validator_stakes: &[u64]) -> usize {
     // Each validator has at least 1 weight.

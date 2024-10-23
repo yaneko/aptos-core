@@ -1,40 +1,43 @@
-module aptos_std::lossless {
+/// Unsigned big number representations and operations.
+module aptos_std::unsigned_bignum {
     use std::vector;
-    use aptos_std::debug;
-    use aptos_std::debug::print_stack_trace;
     use aptos_std::fixed_point64;
     use aptos_std::fixed_point64::FixedPoint64;
     use aptos_std::math64;
     use aptos_std::math64::{max, min};
 
     const ANCHOR: u64 = 1 << 63;
-    /// The actual value is `x[0]*R^(-ANCHOR+p+0) + ... + x[n-1]*R^(-ANCHOR+p+n-1)`,
-    /// where `R = 2^64`, `p`is some shift.
+
+    /// With `n` chunks, it represent the number:
+    /// `chunks[0]*R^(exp_plus_anchor-ANCHOR+0) + ... + chunks[n-1]*R^(exp_plus_anchor-ANCHOR+n-1)`,
+    /// where `R = 2^64`.
     struct Number has copy, drop {
         chunks: vector<u64>,
-        p: u64,
+        exp_plus_anchor: u64,
     }
 
-    public fun product(items: vector<Number>): Number {
+    /// Compute `v[0]*...*v[n-1]` for a list of numbers `v`.
+    public fun product(v: vector<Number>): Number {
         let accumulator = from_u64(1);
-        vector::for_each(items, |item|{
+        vector::for_each(v, |item|{
             let item: Number = item;
             mul_assign(&mut accumulator, item);
         });
         accumulator
     }
 
-    public fun mul_u64_assign(self: &mut Number, other: u64) {
-        let other = (other as u128);
+    /// Update `x` as `x * y`. `y` is a u64.
+    public fun mul_u64_assign(x: &mut Number, y: u64) {
+        let other = (y as u128);
         let carry = 0;
-        vector::for_each_mut(&mut self.chunks, |chunk|{
+        vector::for_each_mut(&mut x.chunks, |chunk|{
             let chunk: &mut u64 = chunk;
             let new_val = other * (*chunk as u128) + carry;
             *chunk = ((new_val & U64_MASK) as u64);
             carry = new_val >> 64;
         });
         if (carry > 0) {
-            vector::push_back(&mut self.chunks, (carry as u64));
+            vector::push_back(&mut x.chunks, (carry as u64));
         }
     }
 
@@ -49,7 +52,7 @@ module aptos_std::lossless {
     /// Equivalent of `self << c` at chunk level, where `c + ANCHOR == degree_diff_plus_anchor`.
     /// `c` can also be negative, which means `self >> (-c)` at chunk level.
     fun shift_by_chunk_assign(self: &mut Number, offset_plus_anchor: u64) {
-        self.p = (((self.p as u128) + (offset_plus_anchor as u128) - (ANCHOR as u128)) as u64);
+        self.exp_plus_anchor = (((self.exp_plus_anchor as u128) + (offset_plus_anchor as u128) - (ANCHOR as u128)) as u64);
     }
 
     /// Equivalent of `self << b` at bit level, where `b + ANCHOR == bit_offset_plus_anchor`.
@@ -65,10 +68,24 @@ module aptos_std::lossless {
         shift_by_chunk_assign(self, chunk_offset_plus_anchor);
     }
 
-    public fun shift_up_by_bit_assign(self: &mut Number, num_bits: u64) {
-        shift_by_bit_assign(self, num_bits + ANCHOR);
+    /// Compute `x << k`.
+    public fun shift_up_by_bit(x: Number, k: u64): Number {
+        shift_up_by_bit_assign(&mut x, k);
+        x
     }
 
+    /// Update `x` to be `x << k`.
+    public fun shift_up_by_bit_assign(x: &mut Number, k: u64) {
+        shift_by_bit_assign(x, k + ANCHOR);
+    }
+
+    /// Compute `x >> k`.
+    public fun shift_down_by_bit(x: Number, num_bits: u64): Number {
+        shift_down_by_bit_assign(&mut x, num_bits);
+        x
+    }
+
+    /// Update `x` to be `x >> k`.
     public fun shift_down_by_bit_assign(self: &mut Number, num_bits: u64) {
         shift_by_bit_assign(self, ANCHOR - num_bits);
     }
@@ -84,39 +101,32 @@ module aptos_std::lossless {
         assert!(eq(&z, &x), 9999);
     }
 
-    public fun shift_up_by_chunk_assign(self: &mut Number, num_chunks: u64) {
-        shift_by_chunk_assign(self, num_chunks + ANCHOR);
-    }
-
-    public fun shift_down_by_chunk_assign(self: &mut Number, num_chunks: u64) {
-        shift_by_chunk_assign(self, ANCHOR - num_chunks);
-    }
-
-    public fun mul_assign(self: &mut Number, other: Number) {
+    /// Update `x` to be `x * y`.
+    public fun mul_assign(x: &mut Number, y: Number) {
         let sub_results = vector[];
-        let Number { chunks, p } = other;
+        let Number { chunks, exp_plus_anchor } = y;
         vector::enumerate_ref(&chunks, |i, chunk|{
             let chunk = *chunk;
-            let self_clone = *self;
+            let self_clone = *x;
             mul_u64_assign(&mut self_clone, chunk);
-            shift_by_chunk_assign(&mut self_clone, p + i);
+            shift_by_chunk_assign(&mut self_clone, exp_plus_anchor + i);
             vector::push_back(&mut sub_results, self_clone);
         });
-        *self = sum(sub_results);
+        *x = sum(sub_results);
     }
 
-    public fun add_assign(self: &mut Number, other: Number) {
-        let x_degree_lmt_plus_anchor = self.p + vector::length(&self.chunks);
-        let y_degree_lmt_plus_anchor = other.p + vector::length(&other.chunks);
+    /// Update `x` to be `x + y`.
+    public fun add_assign(x: &mut Number, y: Number) {
+        let x_degree_lmt_plus_anchor = x.exp_plus_anchor + vector::length(&x.chunks);
+        let y_degree_lmt_plus_anchor = y.exp_plus_anchor + vector::length(&y.chunks);
         let degree_high_plus_anchor = max(x_degree_lmt_plus_anchor, y_degree_lmt_plus_anchor);
-        let degree_low_plus_anchor = min(self.p, other.p);
-
+        let degree_low_plus_anchor = min(x.exp_plus_anchor, y.exp_plus_anchor);
         let new_chunks = vector[];
         let carry = 0;
         let i = degree_low_plus_anchor;
         while (i < degree_high_plus_anchor) {
-            let chunk_0 = get_chunk(self, i);
-            let chunk_1 = get_chunk(&other, i);
+            let chunk_0 = get_chunk(x, i);
+            let chunk_1 = get_chunk(&y, i);
             let new_val = (chunk_0 as u128) + (chunk_1 as u128) + carry;
             vector::push_back(&mut new_chunks, ((new_val & U64_MASK) as u64));
             carry = new_val >> 64;
@@ -126,9 +136,9 @@ module aptos_std::lossless {
             vector::push_back(&mut new_chunks, (carry as u64));
         };
 
-        *self = Number {
+        *x = Number {
             chunks: new_chunks,
-            p: degree_low_plus_anchor,
+            exp_plus_anchor: degree_low_plus_anchor,
         };
     }
 
@@ -141,9 +151,10 @@ module aptos_std::lossless {
         assert!(eq(&x, &z), 9);
     }
 
-    public fun sum(items: vector<Number>): Number {
+    /// Compute `v[0]+...+v[n-1]` for a list of `n` values `v[]`.
+    public fun sum(v: vector<Number>): Number {
         let accumulator = from_u64(0);
-        vector::for_each(items, |item|{
+        vector::for_each(v, |item|{
             let item: Number = item;
             add_assign(&mut accumulator, item);
         });
@@ -164,11 +175,12 @@ module aptos_std::lossless {
         assert!(eq(&expected, &actual), 9);
     }
 
+    /// Compute `a - b`. Abort if `a < b`.
     public fun sub(a: Number, b: Number): Number {
-        let a_degree_lmt_plus_anchor = a.p + vector::length(&a.chunks);
-        let b_degree_lmt_plus_anchor = b.p + vector::length(&b.chunks);
+        let a_degree_lmt_plus_anchor = a.exp_plus_anchor + vector::length(&a.chunks);
+        let b_degree_lmt_plus_anchor = b.exp_plus_anchor + vector::length(&b.chunks);
         let degree_high_plus_anchor = max(a_degree_lmt_plus_anchor, b_degree_lmt_plus_anchor);
-        let degree_low_plus_anchor = min(a.p, b.p);
+        let degree_low_plus_anchor = min(a.exp_plus_anchor, b.exp_plus_anchor);
         let i = degree_low_plus_anchor;
         let borrowed = 0;
         let new_chunks = vector[];
@@ -183,7 +195,7 @@ module aptos_std::lossless {
         assert!(borrowed == 0, 9990);
         Number {
             chunks: new_chunks,
-            p: degree_low_plus_anchor,
+            exp_plus_anchor: degree_low_plus_anchor,
         }
     }
 
@@ -201,8 +213,8 @@ module aptos_std::lossless {
         assert!(eq(&c, &sub(a, b)), 9990);
     }
 
-    /// find p such that `2^p <= x < 2^{p+1}`.
-    /// If p >= 0, return (p, 0); otherwise, return (0, -p).
+    /// find `p` such that `2^p <= x < 2^{p+1}`.
+    /// If `p >= 0`, return `(p, 0)`; otherwise, return `(0, -p)`.
     /// Abort if `x = 0`.
     public fun log2_floor(x: &Number): (u64, u64) {
         let n = vector::length(&x.chunks);
@@ -211,17 +223,16 @@ module aptos_std::lossless {
             let chunk = *vector::borrow(&x.chunks, n-1-i);
             if (chunk > 0) {
                 let bit_offset = (math64::floor_log2(chunk) as u64);
-                if (n-1-i+x.p >= ANCHOR) {
-                    let chunk_offset = n - 1 - i + x.p - ANCHOR;
-                    return (chunk_offset * 64 + bit_offset, 0);
+                if (n-1-i+x.exp_plus_anchor >= ANCHOR) {
+                    let chunk_offset = n - 1 - i + x.exp_plus_anchor - ANCHOR;
+                    return (chunk_offset * 64 + bit_offset, 0)
                 } else {
-                    let minus_chunk_offset = ANCHOR - (n - 1 - i + x.p);
-                    return (0, minus_chunk_offset * 64 - bit_offset);
+                    let minus_chunk_offset = ANCHOR - (n - 1 - i + x.exp_plus_anchor);
+                    return (0, minus_chunk_offset * 64 - bit_offset)
                 }
             };
             i = i + 1;
         };
-        debug::print(&is_zero(x));
         abort(999)
     }
 
@@ -253,10 +264,11 @@ module aptos_std::lossless {
         assert!(1 == shift_down, 99951);
     }
 
-    /// Given a power-of-2 `increment`, round `x` to the nearest multiplier of `increment`.
-    /// `(k+1/2)*increment` will be rounded to `(k+1)*increment`.
-    public fun round(x: Number, increment: Number): Number {
-        let (shift_up, shift_down) = log2_floor(&increment);
+    /// Round `x` to the nearest multiplier of `unit`.
+    /// `unit` must be a power of 2.
+    /// `(k+1/2)*unit` will be rounded to `(k+1)*unit`.
+    public fun round(x: Number, unit: Number): Number {
+        let (shift_up, shift_down) = log2_floor(&unit);
         // Ensure increment is a power of 2.
         let offset_plus_anchor = if (shift_down == 0) {
             shift_up + ANCHOR
@@ -266,7 +278,7 @@ module aptos_std::lossless {
         let neg_offset_plus_anchor = (((ANCHOR as u128) * 2 - (offset_plus_anchor as u128)) as u64);
         shift_by_bit_assign(&mut x, neg_offset_plus_anchor);
         let (int, frac) = split_by_point(x);
-        let half = power_of_2(0, 1);
+        let half = exp2(0, 1);
         let carry_or_not = if (less_than(&frac, &half)) {
             0
         } else {
@@ -277,18 +289,29 @@ module aptos_std::lossless {
         int
     }
 
-    /// Compute `2^e`.
-    public fun power_of_2(shift_up: u64, shift_down: u64): Number {
-        assert!(shift_up == 0 || shift_down == 0, 9991);
+    /// Compute `2^k` for an integer `k`.
+    /// To specify a non-negative `k`, set `maybe_k=k, maybe_neg_k=0`.
+    /// To specify a negative `k`, set `maybe_k=0, maybe_neg_k=-k`.
+    public fun exp2(maybe_k: u64, maybe_neg_k: u64): Number {
+        assert!(maybe_k == 0 || maybe_neg_k == 0, 9991);
         let ret = from_u64(1);
-        if (shift_down == 0) {
-            shift_up_by_bit_assign(&mut ret, shift_up);
+        if (maybe_neg_k == 0) {
+            shift_up_by_bit_assign(&mut ret, maybe_k);
         } else {
-            shift_down_by_bit_assign(&mut ret, shift_down);
+            shift_down_by_bit_assign(&mut ret, maybe_neg_k);
         };
         ret
     }
 
+    /// Construct from a binary representation.
+    /// A binary representation is a byte array that contains only '0', '1' and at most 1 '.'.
+    /// E.g.,
+    /// - b"" => 0
+    /// - b"." => 0
+    /// - b"10.01" => 2.25
+    /// - b".001" => 1/8
+    /// - b"111." => 7
+    /// - b"01111" => 15
     public fun from_bin_repr(repr: vector<u8>): Number {
         let is_int_part = true;
         let frac_digits = 0;
@@ -303,16 +326,16 @@ module aptos_std::lossless {
                     shift_up_by_bit_assign(&mut res, 1);
                     add_assign(&mut res, from_u64(1));
                 } else {
-                    abort(9990);
+                    abort(9990)
                 }
             } else {
                 frac_digits = frac_digits + 1;
                 if (chr == 48) {
                     // Nothing to do.
                 } else if (chr == 49) {
-                    add_assign(&mut res, power_of_2(0, frac_digits));
+                    add_assign(&mut res, exp2(0, frac_digits));
                 } else {
-                    abort(9991);
+                    abort(9991)
                 }
             }
         });
@@ -346,25 +369,25 @@ module aptos_std::lossless {
         assert!(eq(&expected, &actual), 999);
     }
 
-    /// Given `a.b`, return `a` and `b`.
+    /// Given `x=a.b`, return `a` and `0.b`.
     public fun split_by_point(x: Number): (Number, Number) {
-        if (ANCHOR < x.p) {
+        if (ANCHOR < x.exp_plus_anchor) {
             return (x, from_u64(0))
         };
-        let chunk_0_pos = ANCHOR - x.p;
+        let chunk_0_pos = ANCHOR - x.exp_plus_anchor;
         let num_chunks = vector::length(&x.chunks);
         if (chunk_0_pos >= num_chunks) {
-            return (from_u64(0), x);
+            return (from_u64(0), x)
         };
 
         let int = Number {
             chunks: vector::slice(&x.chunks, chunk_0_pos, num_chunks),
-            p: ANCHOR,
+            exp_plus_anchor: ANCHOR,
         };
 
         let frac = Number {
             chunks: vector::slice(&x.chunks, 0, chunk_0_pos),
-            p: ANCHOR - chunk_0_pos,
+            exp_plus_anchor: ANCHOR - chunk_0_pos,
         };
 
         (int, frac)
@@ -394,12 +417,13 @@ module aptos_std::lossless {
         assert!(eq(&z, &x_frac), 9996);
     }
 
+    /// Check if `x = 0`.
     public fun is_zero(x: &Number): bool {
         vector::all(&x.chunks, |chunk|{ let chunk: u64 = *chunk; chunk == 0})
     }
 
     public fun ceil(x: Number): Number {
-        let half = power_of_2(0, 1);
+        let half = exp2(0, 1);
         add_assign(&mut x, half);
         round(x, from_u64(1))
     }
@@ -407,7 +431,7 @@ module aptos_std::lossless {
     public fun from_u64(val: u64): Number {
         Number {
             chunks: vector[val],
-            p: ANCHOR,
+            exp_plus_anchor: ANCHOR,
         }
     }
 
@@ -416,7 +440,7 @@ module aptos_std::lossless {
         let chunk_1 = ((val >> 64) as u64);
         Number {
             chunks: vector[chunk_0, chunk_1,],
-            p: ANCHOR,
+            exp_plus_anchor: ANCHOR,
         }
     }
 
@@ -428,22 +452,22 @@ module aptos_std::lossless {
         let chunk_1 = ((raw >> 64) as u64);
         Number {
             chunks: vector[chunk_0, chunk_1],
-            p: ANCHOR - 1,
+            exp_plus_anchor: ANCHOR - 1,
         }
     }
 
     fun get_chunk(x: &Number, degree_plus_anchor: u64): u64 {
-        if (degree_plus_anchor < x.p) return 0;
-        let pos_in_arr = degree_plus_anchor - x.p;
+        if (degree_plus_anchor < x.exp_plus_anchor) return 0;
+        let pos_in_arr = degree_plus_anchor - x.exp_plus_anchor;
         if (pos_in_arr >= vector::length(&x.chunks)) return 0;
         *vector::borrow(&x.chunks, pos_in_arr)
     }
 
-    public fun cmp(x: &Number, y: &Number): u64 {
-        let x_degree_lmt_plus_anchor = x.p + vector::length(&x.chunks);
-        let y_degree_lmt_plus_anchor = y.p + vector::length(&y.chunks);
+    fun cmp(x: &Number, y: &Number): u64 {
+        let x_degree_lmt_plus_anchor = x.exp_plus_anchor + vector::length(&x.chunks);
+        let y_degree_lmt_plus_anchor = y.exp_plus_anchor + vector::length(&y.chunks);
         let degree_high_plus_anchor = max(x_degree_lmt_plus_anchor, y_degree_lmt_plus_anchor);
-        let degree_low_plus_anchor = min(x.p, y.p);
+        let degree_low_plus_anchor = min(x.exp_plus_anchor, y.exp_plus_anchor);
         let i = degree_high_plus_anchor;
         while (i >= degree_low_plus_anchor) {
             let chunk_x = get_chunk(x, i);
@@ -505,14 +529,14 @@ module aptos_std::lossless {
     }
 
     public fun floor_assign(self: &mut Number) {
-        let (int, frac) = split_by_point(*self);
+        let (int, _) = split_by_point(*self);
         *self = int;
     }
 
     /// Return integer `q` such that `q*d >= n > (q-1)*d.
     public fun div_ceil(n: Number, d: Number): Number {
         if (is_zero(&n)) {
-            return from_u64(0);
+            return from_u64(0)
         };
         let one = from_u64(1);
 
@@ -521,23 +545,25 @@ module aptos_std::lossless {
 
         let hi = if (d_down == 0 && n_down == 0) {
             if (n_up >= d_up) {
-                power_of_2(n_up - d_up, 0)
+                exp2(n_up - d_up, 0)
             } else {
-                power_of_2(0, d_up - n_up)
+                exp2(0, d_up - n_up)
             }
         } else if (d_down == 0 && n_up == 0) {
-            power_of_2(0, d_up + n_down)
+            exp2(0, d_up + n_down)
         } else if (d_up == 0 && n_down == 0) {
-            power_of_2(d_down + n_up, 0)
+            exp2(d_down + n_up, 0)
         } else {
             if (n_down >= d_down) {
-                power_of_2(0, n_down - d_down)
+                exp2(0, n_down - d_down)
             } else {
-                power_of_2(d_down - n_down, 0)
+                exp2(d_down - n_down, 0)
             }
         };
         shift_up_by_bit_assign(&mut hi, 1);
         let lo = from_u64(0);
+
+        // Binary search for the quotient.
         // Invariant: `hi*d >= n > lo*d`.
         while (greater_than(&sub(hi, lo), &one)) {
             let md = sum(vector[lo, hi]);
@@ -568,7 +594,7 @@ module aptos_std::lossless {
     fun default(): Number {
         Number {
             chunks: vector[],
-            p: ANCHOR,
+            exp_plus_anchor: ANCHOR,
         }
     }
 
@@ -590,6 +616,6 @@ module aptos_std::lossless {
             i = i + 1;
         };
         vector::reverse(&mut x.chunks);
-        x.p = x.p + k;
+        x.exp_plus_anchor = x.exp_plus_anchor + k;
     }
 }

@@ -1,12 +1,16 @@
 module aptos_framework::dkg_rounding {
     use std::option;
     use std::option::Option;
-    use std::string::utf8;
     use std::vector;
-    use aptos_std::debug;
     use aptos_std::fixed_point64;
-    use aptos_std::fixed_point64::{FixedPoint64, max};
-    use aptos_std::lossless;
+    use aptos_std::fixed_point64::FixedPoint64;
+    use aptos_std::unsigned_bignum;
+    #[test_only]
+    use std::string::utf8;
+    #[test_only]
+    use aptos_std::debug;
+    #[test_only]
+    use aptos_framework::randomness;
 
     const ROUNDING_METHOD_BINARY_SEARCH: u64 = 1;
     const ROUNDING_METHOD_INFALLIBLE: u64 = 2;
@@ -56,48 +60,46 @@ module aptos_framework::dkg_rounding {
             fixed_point64::add(secrecy_threshold_in_stake_ratio, epsilon)
         );
 
-        let secrecy_threshold_in_stake_ratio = lossless::from_fixed_point64(secrecy_threshold_in_stake_ratio);
-        let reconstruct_threshold_in_stake_ratio = lossless::from_fixed_point64(reconstruct_threshold_in_stake_ratio);
+        let secrecy_threshold_in_stake_ratio = unsigned_bignum::from_fixed_point64(secrecy_threshold_in_stake_ratio);
+        let reconstruct_threshold_in_stake_ratio = unsigned_bignum::from_fixed_point64(reconstruct_threshold_in_stake_ratio);
 
-        let total_weight_min = (n as u128);
-
-        let total_weight_max = lossless::div_ceil(
-            lossless::sum(vector[lossless::from_u64(n), lossless::from_u64(4)]),
-            lossless::product(vector[
-                lossless::sub(reconstruct_threshold_in_stake_ratio, secrecy_threshold_in_stake_ratio),
-                lossless::from_u64(2),
+        let total_weight_max = unsigned_bignum::div_ceil(
+            unsigned_bignum::sum(vector[unsigned_bignum::from_u64(n), unsigned_bignum::from_u64(4)]),
+            unsigned_bignum::product(vector[
+                unsigned_bignum::sub(reconstruct_threshold_in_stake_ratio, secrecy_threshold_in_stake_ratio),
+                unsigned_bignum::from_u64(2),
             ]),
         );
-        debug::print(&utf8(b"total_weight_max="));
-        debug::print(&total_weight_max);
-        let total_weight_max = lossless::as_u128(total_weight_max);
         let stakes_total = 0;
         vector::for_each(stakes, |stake|{
             stakes_total = stakes_total + (stake as u128);
         });
-        let stakes_total = lossless::from_u128(stakes_total);
+        let stakes_total = unsigned_bignum::from_u128(stakes_total);
 
-        let bar = lossless::as_u128(lossless::ceil(lossless::product(vector[stakes_total, reconstruct_threshold_in_stake_ratio])));
-        let fast_secrecy_threshold_in_stake_ratio = option::map(fast_secrecy_threshold_in_stake_ratio, |v|lossless::from_fixed_point64(v));
+        let bar = unsigned_bignum::as_u128(
+            unsigned_bignum::ceil(unsigned_bignum::product(vector[stakes_total, reconstruct_threshold_in_stake_ratio])));
+        let fast_secrecy_threshold_in_stake_ratio = option::map(fast_secrecy_threshold_in_stake_ratio, |v|unsigned_bignum::from_fixed_point64(v));
 
-        let cur_total_weight = total_weight_min;
-        let delta = 1;
         let profile = default_profile();
-        while (true) {
-            let weight_per_stake = lossless::div_ceil(lossless::from_u128(cur_total_weight), stakes_total);
-            profile = compute_profile(secrecy_threshold_in_stake_ratio, fast_secrecy_threshold_in_stake_ratio, stakes, weight_per_stake);
+        let lo = 0;
+        let hi = unsigned_bignum::as_u128(total_weight_max) * 2;
+        while (lo + 1 < hi) {
+            let md = (lo + hi) / 2;
+            let weight_per_stake = unsigned_bignum::shift_down_by_bit(
+                unsigned_bignum::div_ceil(
+                    unsigned_bignum::shift_up_by_bit(unsigned_bignum::from_u128(md), 64),
+                    stakes_total,
+                ),
+                64,
+            );
+            let cur_profile = compute_profile(secrecy_threshold_in_stake_ratio, fast_secrecy_threshold_in_stake_ratio, stakes, weight_per_stake);
 
-            if (profile.threshold_default_path.in_stakes <= bar) {
-                assert!(cur_total_weight < total_weight_max, E_FATAL);
-                break;
-            };
-
-            cur_total_weight = cur_total_weight + delta;
-            if (cur_total_weight > total_weight_max) {
-                cur_total_weight = total_weight_max;
+            if (cur_profile.threshold_default_path.in_stakes <= bar) {
+                hi = md;
+                profile = cur_profile;
             } else {
-                // delta = delta * 2;
-            }
+                lo = md;
+            };
         };
 
         let Profile {
@@ -140,18 +142,18 @@ module aptos_framework::dkg_rounding {
     /// Further, when `weight_per_stake >= (n + 2) / (2 * stake_total * (reconstruct_threshold_in_stake_ratio - secrecy_threshold_in_stake_ratio))`,
     /// it is guaranteed that `stake_ratio_required_for_liveness <= reconstruct_threshold_in_stake_ratio`.
     fun compute_profile(
-        secrecy_threshold_in_stake_ratio: lossless::Number,
-        secrecy_threshold_in_stake_ratio_fast_path: Option<lossless::Number>,
+        secrecy_threshold_in_stake_ratio: unsigned_bignum::Number,
+        secrecy_threshold_in_stake_ratio_fast_path: Option<unsigned_bignum::Number>,
         stakes: vector<u64>,
-        weight_per_stake: lossless::Number,
+        weight_per_stake: unsigned_bignum::Number,
     ): Profile {
-        let one = lossless::from_u64(1);
-        lossless::min_assign(&mut weight_per_stake, one);
+        let one = unsigned_bignum::from_u64(1);
+        unsigned_bignum::min_assign(&mut weight_per_stake, one);
 
         // Initialize accumulators.
         let validator_weights = vector[];
-        let delta_down = lossless::from_u64(0);
-        let delta_up = lossless::from_u64(0);
+        let delta_down = unsigned_bignum::from_u64(0);
+        let delta_up = unsigned_bignum::from_u64(0);
         let weight_total = 0;
         let stake_total = 0;
 
@@ -159,15 +161,16 @@ module aptos_framework::dkg_rounding {
         vector::for_each(stakes, |stake|{
             let stake: u64 = stake;
             stake_total = stake_total + (stake as u128);
-            let ideal_weight = lossless::product(vector[lossless::from_u64(stake), weight_per_stake]);
-            let rounded_weight = lossless::round(ideal_weight, one);
-            let rounded_weight_u64 = lossless::as_u64(rounded_weight);
+            let ideal_weight = weight_per_stake;
+            unsigned_bignum::mul_u64_assign(&mut ideal_weight, stake);
+            let rounded_weight = unsigned_bignum::round(ideal_weight, one);
+            let rounded_weight_u64 = unsigned_bignum::as_u64(rounded_weight);
             vector::push_back(&mut validator_weights, rounded_weight_u64);
             weight_total = weight_total + (rounded_weight_u64 as u128);
-            if (lossless::greater_than(&ideal_weight, &rounded_weight)) {
-                lossless::add_assign(&mut delta_down, lossless::sub(ideal_weight, rounded_weight));
+            if (unsigned_bignum::greater_than(&ideal_weight, &rounded_weight)) {
+                unsigned_bignum::add_assign(&mut delta_down, unsigned_bignum::sub(ideal_weight, rounded_weight));
             } else {
-                lossless::add_assign(&mut delta_up, lossless::sub(rounded_weight, ideal_weight));
+                unsigned_bignum::add_assign(&mut delta_up, unsigned_bignum::sub(rounded_weight, ideal_weight));
             };
         });
 
@@ -182,7 +185,7 @@ module aptos_framework::dkg_rounding {
         );
 
         let threshold_fast_path = option::map(secrecy_threshold_in_stake_ratio_fast_path, |t|{
-            let t: lossless::Number = t;
+            let t: unsigned_bignum::Number = t;
             compute_threshold(
                 t,
                 weight_per_stake,
@@ -192,6 +195,7 @@ module aptos_framework::dkg_rounding {
                 delta_down,
             )
         });
+
         Profile {
             validator_weights,
             threshold_default_path,
@@ -202,46 +206,96 @@ module aptos_framework::dkg_rounding {
     /// Once a **weight assignment** with `weight_per_stake` is done and `(weight_total, delta_up, delta_down)` are available,
     /// return the minimum reconstruct threshold that satisfies a `secrecy_threshold_in_stake_ratio`.
     fun compute_threshold(
-        secrecy_threshold_in_stake_ratio: lossless::Number,
-        weight_per_stake: lossless::Number,
+        secrecy_threshold_in_stake_ratio: unsigned_bignum::Number,
+        weight_per_stake: unsigned_bignum::Number,
         stake_total: u128,
         weight_total: u128,
-        delta_up: lossless::Number,
-        delta_down: lossless::Number,
+        delta_up: unsigned_bignum::Number,
+        delta_down: unsigned_bignum::Number,
     ): ReconstructThresholdInfo {
-        let reconstruct_threshold_in_weights = lossless::sum(vector[
-            lossless::product(vector[
+        let reconstruct_threshold_in_weights = unsigned_bignum::sum(vector[
+            unsigned_bignum::product(vector[
                 secrecy_threshold_in_stake_ratio,
-                lossless::from_u128(stake_total),
+                unsigned_bignum::from_u128(stake_total),
                 weight_per_stake,
             ]),
             delta_up
         ]);
-        lossless::floor_assign(&mut reconstruct_threshold_in_weights);
-        lossless::add_assign(&mut reconstruct_threshold_in_weights, lossless::from_u64(1));
-        lossless::min_assign(&mut reconstruct_threshold_in_weights, lossless::from_u128(weight_total));
+        unsigned_bignum::floor_assign(&mut reconstruct_threshold_in_weights);
+        unsigned_bignum::add_assign(&mut reconstruct_threshold_in_weights, unsigned_bignum::from_u64(1));
+        unsigned_bignum::min_assign(&mut reconstruct_threshold_in_weights, unsigned_bignum::from_u128(weight_total));
 
-        let reconstruct_threshold_in_stakes = lossless::div_ceil(
-            lossless::sum(vector[reconstruct_threshold_in_weights, delta_down]),
+        let reconstruct_threshold_in_stakes = unsigned_bignum::div_ceil(
+            unsigned_bignum::sum(vector[reconstruct_threshold_in_weights, delta_down]),
             weight_per_stake,
         );
 
         ReconstructThresholdInfo {
-            in_stakes: lossless::as_u128(reconstruct_threshold_in_stakes),
-            in_weights: lossless::as_u128(reconstruct_threshold_in_weights),
+            in_stakes: unsigned_bignum::as_u128(reconstruct_threshold_in_stakes),
+            in_weights: unsigned_bignum::as_u128(reconstruct_threshold_in_weights),
         }
     }
 
-    #[test]
-    fun rounding_test() {
-        let stakes = mainnet_stakes();
-        let secrecy_thre = fixed_point64::create_from_rational(1, 2);
-        let recon_thre = fixed_point64::create_from_rational(2, 3);
-        let fast_recon_thre = option::some(fixed_point64::create_from_rational(67, 100));
-        let result = rounding(stakes, secrecy_thre, recon_thre, fast_recon_thre);
-        let result_0 = rounding_v0(stakes, secrecy_thre, recon_thre, fast_recon_thre);
-        debug::print(&get_total_weight(&result));
-        debug::print(&get_total_weight(&result_0));
+    struct Obj has drop {
+        vid: u64,
+        stake: u64,
+        weight_0: u64,
+        weight_1: u64,
+    }
+
+    #[test_only]
+    fun random_stake_dist(): vector<u64> {
+        let n = randomness::u64_range(10, 200);
+
+        let ret = vector[];
+        while (n > 0) {
+            let stake = if (randomness::u64_range(0, 2) == 0) {
+                randomness::u64_range(100000000000000, 1000000000000000)
+            } else {
+                randomness::u64_range(1000000000000000, 10000000000000000)
+            };
+            vector::push_back(&mut ret, stake);
+            n = n - 1;
+        };
+        ret
+    }
+
+    #[test(framework = @0x1)]
+    fun rounding_test(framework: signer) {
+        randomness::initialize_for_testing(&framework);
+        let stake_distributions = vector[mainnet_stakes()];
+        let n = 9;
+        while (n > 0) {
+            vector::push_back(&mut stake_distributions, random_stake_dist());
+            n = n - 1;
+        };
+
+        vector::for_each(stake_distributions, |stakes| {
+            debug::print(&utf8(b"target dist:"));
+            debug::print(&stakes);
+            let stakes: vector<u64> = stakes;
+            let secrecy_thre = fixed_point64::create_from_rational(1, 2);
+            let recon_thre = fixed_point64::create_from_rational(2, 3);
+            let fast_recon_thre = option::some(fixed_point64::create_from_rational(67, 100));
+            let result_1 = rounding(stakes, secrecy_thre, recon_thre, fast_recon_thre);
+            let result_0 = rounding_v0(stakes, secrecy_thre, recon_thre, fast_recon_thre);
+            let n = vector::length(&stakes);
+            let i = 0;
+            while (i < n) {
+                let obj = Obj {
+                    vid: i,
+                    stake: *vector::borrow(&stakes, i),
+                    weight_0: *vector::borrow(&result_0.weights, i),
+                    weight_1: *vector::borrow(&result_1.weights, i),
+                };
+                if (obj.weight_0 != obj.weight_1) {
+                    debug::print(&obj);
+                };
+                i = i + 1;
+            };
+            debug::print(&get_total_weight(&result_1));
+            debug::print(&get_total_weight(&result_0));
+        });
     }
 
     fun rounding_v0(

@@ -39,7 +39,7 @@ fn run_tests_for_pkg(path_to_pkg: impl Into<String>) {
         ut_config,
         aptos_test_natives(),
         aptos_test_feature_flags_genesis(),
-        /* gas limit */ Some(100_000),
+        /* gas limit */ Some(100_000_000),
         /* cost_table */ None,
         /* compute_coverage */ false,
         &mut std::io::stdout(),
