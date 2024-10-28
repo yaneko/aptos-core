@@ -45,7 +45,6 @@ mod metrics;
 pub mod mock;
 pub mod state_delta;
 pub mod state_view;
-
 use crate::chunk_to_commit::ChunkToCommit;
 use aptos_scratchpad::SparseMerkleTree;
 pub use aptos_types::block_info::BlockHeight;

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    async_proof_fetcher::AsyncProofFetcher, cached_state_view::CachedStateView,
+    cached_state_view::CachedStateView,
     state_delta::StateDelta, DbReader,
 };
 use aptos_crypto::HashValue;
@@ -53,7 +53,7 @@ impl ExecutedTrees {
         transaction_accumulator: Arc<InMemoryTransactionAccumulator>,
     ) -> Self {
         assert_eq!(
-            state.current_version.map_or(0, |v| v + 1),
+            state.next_version(),
             transaction_accumulator.num_leaves()
         );
         Self {
@@ -95,17 +95,11 @@ impl ExecutedTrees {
 
     pub fn verified_state_view(
         &self,
-        id: StateViewId,
-        reader: Arc<dyn DbReader>,
-        proof_fetcher: Arc<AsyncProofFetcher>,
+        _id: StateViewId,
+        _reader: Arc<dyn DbReader>,
     ) -> Result<CachedStateView> {
-        CachedStateView::new(
-            id,
-            reader,
-            self.transaction_accumulator.num_leaves(),
-            self.state.current.clone(),
-            proof_fetcher,
-        )
+        // FIXME(aldenhu)
+        todo!()
     }
 }
 

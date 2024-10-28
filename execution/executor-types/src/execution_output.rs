@@ -11,11 +11,12 @@ use aptos_types::{
     contract_event::ContractEvent,
     epoch_state::EpochState,
     transaction::{
-        block_epilogue::BlockEndInfo, ExecutionStatus, Transaction, TransactionStatus, Version,
+        block_epilogue::BlockEndInfo, Transaction, TransactionStatus, Version,
     },
 };
 use derive_more::Deref;
 use std::sync::Arc;
+use aptos_storage_interface::state_delta::InMemState;
 
 #[derive(Clone, Debug, Deref)]
 pub struct ExecutionOutput {
@@ -34,6 +35,8 @@ impl ExecutionOutput {
         state_cache: StateCache,
         block_end_info: Option<BlockEndInfo>,
         next_epoch_state: Option<EpochState>,
+        last_checkpoint_state: Option<InMemState>,
+        result_state: InMemState,
         subscribable_events: Planned<Vec<ContractEvent>>,
     ) -> Self {
         if is_block {
@@ -58,6 +61,8 @@ impl ExecutionOutput {
             state_cache,
             block_end_info,
             next_epoch_state,
+            last_checkpoint_state,
+            result_state,
             subscribable_events,
         })
     }
@@ -73,11 +78,14 @@ impl ExecutionOutput {
             state_cache: StateCache::new_empty(state.current.clone()),
             block_end_info: None,
             next_epoch_state: None,
+            last_checkpoint_state: None,
+            result_state: InMemState::new_empty(),
             subscribable_events: Planned::ready(vec![]),
         })
     }
 
     pub fn new_dummy_with_input_txns(txns: Vec<Transaction>) -> Self {
+        /*
         let num_txns = txns.len();
         let success_status = TransactionStatus::Keep(ExecutionStatus::Success);
         Self::new_impl(Inner {
@@ -92,6 +100,8 @@ impl ExecutionOutput {
             next_epoch_state: None,
             subscribable_events: Planned::ready(vec![]),
         })
+        */
+        todo!() // FIXME(aldenhu)
     }
 
     pub fn new_dummy() -> Self {
@@ -99,6 +109,8 @@ impl ExecutionOutput {
     }
 
     pub fn reconfig_suffix(&self) -> Self {
+        todo!() // FIXME(aldenhu)
+        /*
         Self::new_impl(Inner {
             is_block: false,
             first_version: self.next_version(),
@@ -111,6 +123,8 @@ impl ExecutionOutput {
             next_epoch_state: self.next_epoch_state.clone(),
             subscribable_events: Planned::ready(vec![]),
         })
+
+         */
     }
 
     fn new_impl(inner: Inner) -> Self {
@@ -156,6 +170,10 @@ pub struct Inner {
     /// state cache.
     pub next_epoch_state: Option<EpochState>,
     pub subscribable_events: Planned<Vec<ContractEvent>>,
+    /// n.b. For state sync chunks, it's possible that there's 0 to multiple state checkpoints in a
+    /// chunk, while for consensus the last transaction should always be a state checkpoint.
+    pub last_checkpoint_state: Option<InMemState>,
+    pub result_state: InMemState,
 }
 
 impl Inner {

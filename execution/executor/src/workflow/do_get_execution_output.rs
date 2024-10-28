@@ -5,6 +5,7 @@ use crate::{
     metrics,
     metrics::{EXECUTOR_ERRORS, OTHER_TIMERS},
 };
+use aptos_experimental_layered_map::LayeredMap;
 use anyhow::{anyhow, Result};
 use aptos_crypto::HashValue;
 use aptos_executor_service::{
@@ -40,6 +41,7 @@ use aptos_types::{
 use aptos_vm::VMExecutor;
 use itertools::Itertools;
 use std::{iter, sync::Arc};
+use aptos_storage_interface::state_delta::{InMemState, StateDelta, StateUpdate};
 
 pub struct DoGetExecutionOutput;
 
@@ -95,7 +97,7 @@ impl DoGetExecutionOutput {
             state_view.next_version(),
             transactions.into_iter().map(|t| t.into_inner()).collect(),
             transaction_outputs,
-            state_view.into_state_cache(),
+            state_view.seal(),
             block_end_info,
             append_state_checkpoint_to_block,
         )
@@ -126,7 +128,7 @@ impl DoGetExecutionOutput {
                 .map(|t| t.into_txn().into_inner())
                 .collect(),
             transaction_outputs,
-            state_view.into_state_cache(),
+            state_view.seal(),
             None, // block end info
             append_state_checkpoint_to_block,
         )
@@ -150,7 +152,7 @@ impl DoGetExecutionOutput {
             state_view.next_version(),
             transactions,
             transaction_outputs,
-            state_view.into_state_cache(),
+            state_view.seal(),
             None, // block end info
             None, // append state checkpoint to block
         )?;
@@ -312,6 +314,7 @@ impl Parser {
                 .then(|| Self::ensure_next_epoch_state(&to_commit))
                 .transpose()?
         };
+        let (last_checkpoint_state, result_state) = Self::update_state(&to_commit, &state_cache);
 
         let out = ExecutionOutput::new(
             is_block,
@@ -323,6 +326,8 @@ impl Parser {
             state_cache,
             block_end_info,
             next_epoch_state,
+            last_checkpoint_state,
+            result_state,
             Planned::place_holder(),
         );
         let ret = out.clone();
@@ -480,6 +485,33 @@ impl Parser {
             configuration.epoch(),
             (&validator_set).into(),
         ))
+    }
+
+    fn update_state(
+        to_commit: &TransactionsWithOutput,
+        state_cache: &StateCache,
+    ) -> (Option<InMemState>, InMemState) {
+        let mut write_sets = to_commit
+            .transaction_outputs()
+            .iter()
+            .map(TransactionOutput::write_set);
+        if let Some(idx) = to_commit.get_last_checkpoint_index() {
+            let last_checkpoint_state = state_cache.speculative_state.update(
+                write_sets.by_ref().take(idx + 1)
+            );
+            let result_state = if idx + 1 == to_commit.len() {
+                last_checkpoint_state.clone()
+            } else {
+                StateDelta::new(
+                    state_cache.speculative_state.base.clone(),
+                    last_checkpoint_state.clone(),
+                ).update(write_sets)
+            };
+            (Some(last_checkpoint_state), result_state)
+        } else {
+            let result_state = state_cache.speculative_state.update(write_sets);
+            (None, result_state)
+        }
     }
 }
 

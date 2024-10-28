@@ -63,6 +63,7 @@ impl TransactionsWithOutput {
         &self.transaction_outputs
     }
 
+    // TODO(aldenhu): move to call site
     pub fn get_last_checkpoint_index(&self) -> Option<usize> {
         (0..self.len())
             .rev()

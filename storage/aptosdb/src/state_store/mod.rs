@@ -578,7 +578,7 @@ impl StateStore {
                 InMemoryStateCalculatorV2::calculate_for_write_sets_after_snapshot(
                     // TODO(aldenhu): avoid cloning the HashMap inside.
                     &Arc::new(buffered_state.current_state().clone()),
-                    &latest_snapshot_state_view.into_state_cache(),
+                    &latest_snapshot_state_view.seal(),
                     last_checkpoint_index,
                     &write_sets,
                 )?;
