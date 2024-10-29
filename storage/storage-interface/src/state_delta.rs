@@ -85,10 +85,6 @@ impl StateDelta {
             && self.current.has_same_root_hash(&other.current)
     }
 
-    pub fn base_root_hash(&self) -> HashValue {
-        self.base.root_hash()
-    }
-
     pub fn root_hash(&self) -> HashValue {
         self.current.root_hash()
     }

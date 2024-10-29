@@ -3,64 +3,14 @@
 
 #![forbid(unsafe_code)]
 
-use crate::transactions_with_output::TransactionsWithOutput;
 use aptos_crypto::HashValue;
 use aptos_drop_helper::DropHelper;
 use aptos_storage_interface::state_delta::StateDelta;
 use aptos_types::{
     state_store::{state_key::StateKey, state_value::StateValue},
-    transaction::TransactionStatus,
 };
 use derive_more::Deref;
 use std::{collections::HashMap, sync::Arc};
-
-#[derive(Default)]
-pub struct TransactionsByStatus {
-    // Statuses of the input transactions, in the same order as the input transactions.
-    // Contains BlockMetadata/Validator transactions,
-    // but doesn't contain StateCheckpoint/BlockEpilogue, as those get added during execution
-    statuses_for_input_txns: Vec<TransactionStatus>,
-    // List of all transactions to be committed, including StateCheckpoint/BlockEpilogue if needed.
-    to_commit: TransactionsWithOutput,
-    to_discard: TransactionsWithOutput,
-    to_retry: TransactionsWithOutput,
-}
-
-impl TransactionsByStatus {
-    pub fn new(
-        statuses_for_input_txns: Vec<TransactionStatus>,
-        to_commit: TransactionsWithOutput,
-        to_discard: TransactionsWithOutput,
-        to_retry: TransactionsWithOutput,
-    ) -> Self {
-        Self {
-            statuses_for_input_txns,
-            to_commit,
-            to_discard,
-            to_retry,
-        }
-    }
-
-    pub fn input_txns_len(&self) -> usize {
-        self.statuses_for_input_txns.len()
-    }
-
-    pub fn into_inner(
-        self,
-    ) -> (
-        Vec<TransactionStatus>,
-        TransactionsWithOutput,
-        TransactionsWithOutput,
-        TransactionsWithOutput,
-    ) {
-        (
-            self.statuses_for_input_txns,
-            self.to_commit,
-            self.to_discard,
-            self.to_retry,
-        )
-    }
-}
 
 #[derive(Clone, Debug, Default, Deref)]
 pub struct StateCheckpointOutput {
