@@ -15,7 +15,7 @@ use aptos_executor_types::ExecutorResult;
 use aptos_infallible::Mutex;
 use aptos_logger::prelude::*;
 use aptos_types::{
-    account_address::AccountAddress, transaction::SignedTransaction,
+    account_address::AccountAddress, transaction::{ReplayProtector, SignedTransaction},
     validator_verifier::ValidatorVerifier, vm_status::DiscardedVMStatus, PeerId,
 };
 use once_cell::sync::OnceCell;
@@ -62,7 +62,7 @@ impl fmt::Display for TransactionSummary {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, Hash, Ord, PartialOrd)]
 pub struct TxnSummaryWithExpiration {
     pub sender: AccountAddress,
-    pub sequence_number: u64,
+    pub replay_protector: ReplayProtector,
     pub expiration_timestamp_secs: u64,
     pub hash: HashValue,
 }
@@ -70,13 +70,13 @@ pub struct TxnSummaryWithExpiration {
 impl TxnSummaryWithExpiration {
     pub fn new(
         sender: AccountAddress,
-        sequence_number: u64,
+        replay_protector: ReplayProtector,
         expiration_timestamp_secs: u64,
         hash: HashValue,
     ) -> Self {
         Self {
             sender,
-            sequence_number,
+            replay_protector,
             expiration_timestamp_secs,
             hash,
         }
@@ -85,7 +85,7 @@ impl TxnSummaryWithExpiration {
 
 impl fmt::Display for TxnSummaryWithExpiration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.sender, self.sequence_number,)
+        write!(f, "{}:{:?}", self.sender, self.replay_protector,)
     }
 }
 

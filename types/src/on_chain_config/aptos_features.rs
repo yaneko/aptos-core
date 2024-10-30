@@ -97,6 +97,7 @@ pub enum FeatureFlag {
     TRANSACTION_SIMULATION_ENHANCEMENT = 78,
     COLLECTION_OWNER = 79,
     ENABLE_LOADER_V2 = 81,
+    ORDERLESS_TRANSACTIONS = 82,
 }
 
 impl FeatureFlag {
@@ -174,6 +175,7 @@ impl FeatureFlag {
             FeatureFlag::ENABLE_RESOURCE_ACCESS_CONTROL,
             FeatureFlag::REJECT_UNSTABLE_BYTECODE_FOR_SCRIPT,
             FeatureFlag::TRANSACTION_SIMULATION_ENHANCEMENT,
+            FeatureFlag::ORDERLESS_TRANSACTIONS,
             // TODO(loader_v2): Enable V2 loader.
             // FeatureFlag::ENABLE_LOADER_V2,
         ]
@@ -322,6 +324,10 @@ impl Features {
 
     pub fn is_loader_v2_enabled(&self) -> bool {
         self.is_enabled(FeatureFlag::ENABLE_LOADER_V2)
+    }
+
+    pub fn is_orderless_txns_enabled(&self) -> bool {
+        self.is_enabled(FeatureFlag::ORDERLESS_TRANSACTIONS)
     }
 
     pub fn get_max_identifier_size(&self) -> u64 {

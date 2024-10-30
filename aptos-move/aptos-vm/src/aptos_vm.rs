@@ -59,11 +59,7 @@ use aptos_types::{
     randomness::Randomness,
     state_store::{state_key::StateKey, StateView, TStateView},
     transaction::{
-        authenticator::AnySignature, signature_verified_transaction::SignatureVerifiedTransaction,
-        BlockOutput, EntryFunction, ExecutionError, ExecutionStatus, ModuleBundle, Multisig,
-        MultisigTransactionPayload, Script, SignedTransaction, Transaction, TransactionArgument,
-        TransactionAuxiliaryData, TransactionOutput, TransactionPayload, TransactionStatus,
-        VMValidatorResult, ViewFunctionOutput, WriteSetPayload,
+        authenticator::AnySignature, signature_verified_transaction::SignatureVerifiedTransaction, BlockOutput, EntryFunction, ExecutionError, ExecutionStatus, ModuleBundle, Multisig, MultisigTransactionPayload, Script, SignedTransaction, Transaction, TransactionArgument, TransactionAuxiliaryData, TransactionExecutable, TransactionOutput, TransactionPayload, TransactionPayloadV2, TransactionStatus, VMValidatorResult, ViewFunctionOutput, WriteSetPayload
     },
     vm_status::{AbortLocation, StatusCode, VMStatus},
 };
@@ -909,7 +905,7 @@ impl AptosVM {
         gas_meter: &mut impl AptosGasMeter,
         traversal_context: &mut TraversalContext<'a>,
         txn_data: &TransactionMetadata,
-        payload: &'a TransactionPayload,
+        executable: &'a TransactionExecutable,
         log_context: &AdapterLogSchema,
         new_published_modules_loaded: &mut bool,
         change_set_configs: &ChangeSetConfigs,
@@ -927,8 +923,8 @@ impl AptosVM {
             gas_meter.charge_keyless()?;
         }
 
-        match payload {
-            TransactionPayload::Script(script) => {
+        match executable {
+            TransactionExecutable::Script(script) => {
                 session.execute(|session| {
                     self.validate_and_execute_script(
                         session,
@@ -940,7 +936,7 @@ impl AptosVM {
                     )
                 })?;
             },
-            TransactionPayload::EntryFunction(entry_fn) => {
+            TransactionExecutable::EntryFunction(entry_fn) => {
                 session.execute(|session| {
                     self.validate_and_execute_entry_function(
                         resolver,
@@ -1971,8 +1967,21 @@ impl AptosVM {
         // should be flushed later.
         let mut new_published_modules_loaded = false;
         let result = match txn.payload() {
-            payload @ TransactionPayload::Script(_)
-            | payload @ TransactionPayload::EntryFunction(_) => self
+            TransactionPayload::Script(script) => {
+                self.execute_script_or_entry_function(
+                    resolver,
+                    code_storage,
+                    &mut user_session,
+                    gas_meter,
+                    &mut traversal_context,
+                    &txn_data,
+                    &TransactionExecutable::Script(script),
+                    log_context,
+                    &mut new_published_modules_loaded,
+                    change_set_configs,
+                )
+            },
+            TransactionPayload::EntryFunction(entry_func) => self
                 .execute_script_or_entry_function(
                     resolver,
                     code_storage,
@@ -1980,7 +1989,7 @@ impl AptosVM {
                     gas_meter,
                     &mut traversal_context,
                     &txn_data,
-                    payload,
+                    &TransactionExecutable::EntryFunction(entry_func),
                     log_context,
                     &mut new_published_modules_loaded,
                     change_set_configs,
@@ -2004,6 +2013,42 @@ impl AptosVM {
             TransactionPayload::ModuleBundle(_) => {
                 unwrap_or_discard!(Err(deprecated_module_bundle!()))
             },
+
+            TransactionPayload::V2(
+                TransactionPayloadV2::V1 {
+                    executable,
+                    extra_config,
+                }
+            ) => {
+                if extra_config.is_multisig() {
+                    self.execute_or_simulate_multisig_transaction(
+                        resolver,
+                        code_storage,
+                        user_session,
+                        &prologue_change_set,
+                        gas_meter,
+                        &mut traversal_context,
+                        &txn_data,
+                        payload,
+                        log_context,
+                        &mut new_published_modules_loaded,
+                        change_set_configs,
+                    )
+                } else {
+                    self.execute_script_or_entry_function(
+                        resolver,
+                        code_storage,
+                        user_session,
+                        gas_meter,
+                        &mut traversal_context,
+                        &txn_data,
+                        executable,
+                        log_context,
+                        &mut new_published_modules_loaded,
+                        change_set_configs,
+                    )
+                }
+            }
         };
         drop(payload_timer);
 
@@ -2565,6 +2610,7 @@ impl AptosVM {
             log_context,
         )?;
 
+        // TODO: Condense the match statement. Many of the paths are calling run_script_prologue
         match payload {
             TransactionPayload::Script(_) | TransactionPayload::EntryFunction(_) => {
                 transaction_validation::run_script_prologue(
@@ -2601,7 +2647,8 @@ impl AptosVM {
                         session,
                         module_storage,
                         txn_data,
-                        multisig_payload,
+                        multisig_payload.as_transaction_executable(),
+                        multisig_payload.multisig_address,
                         self.features(),
                         log_context,
                         traversal_context,
@@ -2609,6 +2656,54 @@ impl AptosVM {
                 } else {
                     Ok(())
                 }
+            },
+
+            TransactionPayload::V2(
+                TransactionPayloadV2::V1 { executable, extra_config } // Deprecated.
+            ) => {
+                match executable {
+                    TransactionExecutable::Script(_) | TransactionExecutable::EntryFunction(_) => {
+                        transaction_validation::run_script_prologue(
+                            session,
+                            module_storage,
+                            txn_data,
+                            self.features(),
+                            log_context,
+                            traversal_context,
+                            self.is_simulation,
+                        )?
+                    }
+                    _ => {}
+                };
+
+                if executable.is_empty() && !extra_config.is_multisig() {
+                    // TODO: Return an apprioriate error
+                }
+
+                if extra_config.is_multisig() {
+                    // TODO: Return an apprioriate error
+                    assert!(!executable.is_script());
+                    // Once "simulation_enhancement" is enabled, the simulation path also validates the
+                    // multisig transaction by running the multisig prologue.
+                    if !self.is_simulation
+                    || self
+                        .features()
+                        .is_transaction_simulation_enhancement_enabled()
+                        {
+                            transaction_validation::run_multisig_prologue(
+                                session,
+                                module_storage,
+                                txn_data,
+                                executable,
+                                // TODO: Is unwrap() okay?
+                                extra_config.multisig_address().unwrap(),
+                                self.features(),
+                                log_context,
+                                traversal_context,
+                            )?
+                        }
+                }
+                Ok(())
             },
 
             // Deprecated.
