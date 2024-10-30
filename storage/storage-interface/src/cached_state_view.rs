@@ -3,7 +3,8 @@
 
 use crate::{
     metrics::TIMER,
-    state_view::{DbStateView, },
+    state_delta::{InMemState, StateDelta, StateUpdate},
+    state_view::DbStateView,
     DbReader,
 };
 use aptos_types::{
@@ -12,18 +13,17 @@ use aptos_types::{
         state_value::StateValue, StateViewId, TStateView,
     },
     transaction::Version,
+    write_set::{TransactionWrite, WriteOp},
 };
 use core::fmt;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use std::{
-    collections::{HashMap, },
+    collections::HashMap,
     fmt::{Debug, Formatter},
     sync::Arc,
 };
-use aptos_types::write_set::{TransactionWrite, WriteOp};
-use crate::state_delta::{InMemState, StateDelta, StateUpdate};
 
 type Result<T, E = StateviewError> = std::result::Result<T, E>;
 type StateCacheShard = DashMap<StateKey, CachedStateValue>;
@@ -36,10 +36,7 @@ pub enum CachedStateValue {
 
 impl CachedStateValue {
     pub fn from_write_op(version: Version, write_op: &WriteOp) -> Self {
-        Self::new_update(
-            version,
-            write_op.as_state_value(),
-        )
+        Self::new_update(version, write_op.as_state_value())
     }
 
     pub fn from_db_result(db_result: Option<(Version, StateValue)>) -> Self {
@@ -50,16 +47,13 @@ impl CachedStateValue {
     }
 
     pub fn new_update(version: Version, value: Option<StateValue>) -> Self {
-        Self::Update(StateUpdate {
-            version,
-            value,
-        })
+        Self::Update(StateUpdate { version, value })
     }
 
     pub fn value_opt(&self) -> Option<StateValue> {
         match self {
             Self::NonExistent => None,
-            Self::Update( StateUpdate {value, .. } ) => value.clone(),
+            Self::Update(StateUpdate { value, .. }) => value.clone(),
         }
     }
 }
@@ -106,30 +100,16 @@ impl Debug for CachedStateView {
 }
 
 impl CachedStateView {
-    /// FIXME(aldenhu): consolidate
-    pub fn new(
-        id: StateViewId,
-        speculative_state: StateDelta,
-        reader: Arc<dyn DbReader>,
-    ) -> Result<Self> {
-        Ok(Self::new_impl(
-            id,
-            speculative_state,
-            reader,
-        ))
-    }
+    pub fn new(id: StateViewId, state: InMemState, reader: Arc<dyn DbReader>) -> Result<Self> {
+        let persisted_state = reader.get_persisted_state_before(&state)?;
+        let speculative_state = state.into_delta(persisted_state);
 
-    pub fn new_impl(
-        id: StateViewId,
-        speculative_state: StateDelta,
-        reader: Arc<dyn DbReader>,
-    ) -> Self {
-        Self {
+        Ok(Self {
             id,
             speculative_state,
             reader,
             sharded_state_cache: ShardedStateCache::default(),
-        }
+        })
     }
 
     pub fn seal(self) -> StateCache {

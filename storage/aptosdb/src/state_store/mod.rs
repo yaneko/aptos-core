@@ -588,7 +588,7 @@ impl StateStore {
                 state_checkpoint_output
                     .state_updates_before_last_checkpoint
                     .as_ref(),
-                &state_checkpoint_output.result_state,
+                &state_checkpoint_output.state_auth,
                 true, /* sync_commit */
             )?;
         }

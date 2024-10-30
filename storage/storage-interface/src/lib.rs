@@ -43,14 +43,17 @@ mod executed_trees;
 mod metrics;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod mock;
+pub mod state_authenticator;
 pub mod state_delta;
 pub mod state_view;
-use crate::chunk_to_commit::ChunkToCommit;
+
+use crate::{chunk_to_commit::ChunkToCommit, state_delta::InMemState};
 use aptos_scratchpad::SparseMerkleTree;
 pub use aptos_types::block_info::BlockHeight;
 use aptos_types::state_store::state_key::prefix::StateKeyPrefix;
 pub use errors::AptosDbError;
 pub use executed_trees::ExecutedTrees;
+use crate::state_authenticator::StateAuthenticator;
 
 pub type Result<T, E = AptosDbError> = std::result::Result<T, E>;
 // This is last line of defense against large queries slipping through external facing interfaces,
@@ -382,6 +385,14 @@ pub trait DbReader: Send + Sync {
 
         /// Get the oldest in memory state tree.
         fn get_buffered_state_base(&self) -> Result<SparseMerkleTree<StateValue>>;
+
+        /// Get state at a version at or older than the parameter.
+        /// State older than the returned state can be queried from the DB.
+        fn get_persisted_state_before(&self, state: &InMemState) -> Result<InMemState>;
+
+        /// Get state authenticator at a version at or older than the parameter.
+        /// State proofs older than the returned state can be queried from the DB.
+        fn get_persisted_state_authen_before(&self, state: &StateAuthenticator) -> Result<InMemState>;
 
         /// Get the ledger info of the epoch that `known_version` belongs to.
         fn get_epoch_ending_ledger_info(

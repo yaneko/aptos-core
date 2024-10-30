@@ -6,17 +6,17 @@
 
 use crate::{planned::Planned, transactions_with_output::TransactionsWithOutput};
 use aptos_drop_helper::DropHelper;
-use aptos_storage_interface::{cached_state_view::StateCache, state_delta::StateDelta};
+use aptos_storage_interface::{
+    cached_state_view::StateCache,
+    state_delta::{InMemState, StateDelta},
+};
 use aptos_types::{
     contract_event::ContractEvent,
     epoch_state::EpochState,
-    transaction::{
-        block_epilogue::BlockEndInfo, Transaction, TransactionStatus, Version,
-    },
+    transaction::{block_epilogue::BlockEndInfo, Transaction, TransactionStatus, Version},
 };
 use derive_more::Deref;
 use std::sync::Arc;
-use aptos_storage_interface::state_delta::InMemState;
 
 #[derive(Clone, Debug, Deref)]
 pub struct ExecutionOutput {
@@ -35,16 +35,26 @@ impl ExecutionOutput {
         state_cache: StateCache,
         block_end_info: Option<BlockEndInfo>,
         next_epoch_state: Option<EpochState>,
+        parent_state: InMemState,
         last_checkpoint_state: Option<InMemState>,
         result_state: InMemState,
         subscribable_events: Planned<Vec<ContractEvent>>,
     ) -> Self {
+        assert_eq!(
+            first_version, parent_state.next_version(),
+        );
+        assert_eq!(
+            first_version + to_commit.len(), result_state.next_version(),
+        );
         if is_block {
             // If it's a block, ensure it ends with state checkpoint.
             assert!(
                 next_epoch_state.is_some()
                     || to_commit.is_empty() // reconfig suffix
                     || to_commit.transactions.last().unwrap().is_non_reconfig_block_ending()
+            );
+            assert!(
+                last_checkpoint_state.is_none()
             );
         } else {
             // If it's not, there shouldn't be any transaction to be discarded or retried.
@@ -61,13 +71,14 @@ impl ExecutionOutput {
             state_cache,
             block_end_info,
             next_epoch_state,
+            parent_state,
             last_checkpoint_state,
             result_state,
             subscribable_events,
         })
     }
 
-    pub fn new_empty(state: Arc<StateDelta>) -> Self {
+    pub fn new_empty(state: InMemState) -> Self {
         Self::new_impl(Inner {
             is_block: false,
             first_version: state.next_version(),
@@ -78,8 +89,9 @@ impl ExecutionOutput {
             state_cache: StateCache::new_empty(state.current.clone()),
             block_end_info: None,
             next_epoch_state: None,
+            parent_state: state.clone(),
             last_checkpoint_state: None,
-            result_state: InMemState::new_empty(),
+            result_state: state,
             subscribable_events: Planned::ready(vec![]),
         })
     }
@@ -110,21 +122,21 @@ impl ExecutionOutput {
 
     pub fn reconfig_suffix(&self) -> Self {
         todo!() // FIXME(aldenhu)
-        /*
-        Self::new_impl(Inner {
-            is_block: false,
-            first_version: self.next_version(),
-            statuses_for_input_txns: vec![],
-            to_commit: TransactionsWithOutput::new_empty(),
-            to_discard: TransactionsWithOutput::new_empty(),
-            to_retry: TransactionsWithOutput::new_empty(),
-            state_cache: StateCache::new_dummy(),
-            block_end_info: None,
-            next_epoch_state: self.next_epoch_state.clone(),
-            subscribable_events: Planned::ready(vec![]),
-        })
+                /*
+                Self::new_impl(Inner {
+                    is_block: false,
+                    first_version: self.next_version(),
+                    statuses_for_input_txns: vec![],
+                    to_commit: TransactionsWithOutput::new_empty(),
+                    to_discard: TransactionsWithOutput::new_empty(),
+                    to_retry: TransactionsWithOutput::new_empty(),
+                    state_cache: StateCache::new_dummy(),
+                    block_end_info: None,
+                    next_epoch_state: self.next_epoch_state.clone(),
+                    subscribable_events: Planned::ready(vec![]),
+                })
 
-         */
+                 */
     }
 
     fn new_impl(inner: Inner) -> Self {
@@ -149,6 +161,7 @@ impl ExecutionOutput {
 #[derive(Debug)]
 pub struct Inner {
     pub is_block: bool,
+    // FIXME(aldenhu): redundant
     pub first_version: Version,
     // Statuses of the input transactions, in the same order as the input transactions.
     // Contains BlockMetadata/Validator transactions,
@@ -159,6 +172,7 @@ pub struct Inner {
     pub to_discard: TransactionsWithOutput,
     pub to_retry: TransactionsWithOutput,
 
+    /// FIXME(aldenhu): is it useful now that we have the InMemState calculated already?
     /// Carries the frozen base state view, so all in-mem nodes involved won't drop before the
     /// execution result is processed; as well as all the accounts touched during execution, together
     /// with their proofs.
@@ -170,6 +184,8 @@ pub struct Inner {
     /// state cache.
     pub next_epoch_state: Option<EpochState>,
     pub subscribable_events: Planned<Vec<ContractEvent>>,
+
+    pub parent_state: InMemState,
     /// n.b. For state sync chunks, it's possible that there's 0 to multiple state checkpoints in a
     /// chunk, while for consensus the last transaction should always be a state checkpoint.
     pub last_checkpoint_state: Option<InMemState>,

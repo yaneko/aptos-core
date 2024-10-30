@@ -5,10 +5,7 @@
 
 use aptos_crypto::HashValue;
 use aptos_drop_helper::DropHelper;
-use aptos_storage_interface::state_delta::StateDelta;
-use aptos_types::{
-    state_store::{state_key::StateKey, state_value::StateValue},
-};
+use aptos_storage_interface::{state_authenticator::StateAuthenticator, state_delta::StateDelta};
 use derive_more::Deref;
 use std::{collections::HashMap, sync::Arc};
 
@@ -20,26 +17,30 @@ pub struct StateCheckpointOutput {
 
 impl StateCheckpointOutput {
     pub fn new(
-        parent_state: Arc<StateDelta>,
-        result_state: Arc<StateDelta>,
-        state_updates_before_last_checkpoint: Option<HashMap<StateKey, Option<StateValue>>>,
+        parent_auth: StateAuthenticator,
+        last_checkpoint_auth: Option<StateAuthenticator>,
+        state_auth: StateAuthenticator,
         state_checkpoint_hashes: Vec<Option<HashValue>>,
     ) -> Self {
         Self::new_impl(Inner {
-            parent_state,
-            result_state,
-            state_updates_before_last_checkpoint,
+            parent_auth,
+            last_checkpoint_auth,
+            state_auth,
             state_checkpoint_hashes,
         })
     }
 
     pub fn new_empty(state: Arc<StateDelta>) -> Self {
+        /*
         Self::new_impl(Inner {
             parent_state: state.clone(),
-            result_state: state,
+            state_authenticator: state,
             state_updates_before_last_checkpoint: None,
             state_checkpoint_hashes: vec![],
         })
+
+         */
+        todo!() // FIXME(aldenhu)
     }
 
     pub fn new_dummy() -> Self {
@@ -53,16 +54,15 @@ impl StateCheckpointOutput {
     }
 
     pub fn reconfig_suffix(&self) -> Self {
-        Self::new_empty(self.result_state.clone())
+        Self::new_empty(self.state_auth.clone())
     }
 }
 
 #[derive(Debug, Default)]
 pub struct Inner {
-    pub parent_state: Arc<StateDelta>,
-    pub result_state: Arc<StateDelta>,
-    pub state_updates_before_last_checkpoint: Option<HashMap<StateKey, Option<StateValue>>>,
+    /// FIXME(aldenhu): see if it's useful
+    pub parent_auth: StateAuthenticator,
+    pub last_checkpoint_auth: Option<StateAuthenticator>,
+    pub state_auth: StateAuthenticator,
     pub state_checkpoint_hashes: Vec<Option<HashValue>>,
 }
-
-impl Inner {}

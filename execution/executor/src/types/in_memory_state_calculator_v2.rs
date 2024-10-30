@@ -26,19 +26,22 @@ use dashmap::DashMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
+use aptos_storage_interface::state_authenticator::StateAuthenticator;
 
+/// FIXME(aldenhu): rename
 /// Helper class for calculating state changes after a block of transactions are executed.
 pub struct InMemoryStateCalculatorV2 {}
 
 impl InMemoryStateCalculatorV2 {
     pub fn calculate_for_transactions(
         execution_output: &ExecutionOutput,
-        parent_state: &Arc<StateDelta>,
+        parent_auth: &StateAuthenticator,
         known_state_checkpoints: Option<impl IntoIterator<Item = Option<HashValue>>>,
     ) -> Result<StateCheckpointOutput> {
-        if execution_output.is_block {
-            Self::validate_input_for_block(parent_state, &execution_output.to_commit)?;
-        }
+        let state_updates_vec = Self::get_sharded_state_updates(
+            execution_output.to_commit.transaction_outputs(),
+            |txn_output| txn_output.write_set(),
+        );
 
         // If there are multiple checkpoints in the chunk, we only calculate the SMT (and its root
         // hash) for the last one.
@@ -129,6 +132,7 @@ impl InMemoryStateCalculatorV2 {
             parent_state.base.freeze(&frozen_base.base_smt)
         };
 
+        /*
         let mut latest_checkpoint_version = parent_state.base_version;
         let mut state_checkpoint_hashes = known_state_checkpoints
             .map_or_else(|| vec![None; num_txns], |v| v.into_iter().collect());
@@ -147,6 +151,7 @@ impl InMemoryStateCalculatorV2 {
             }
             latest_checkpoint_version = Some(first_version + index as u64);
         }
+         */
 
         let current_version = first_version + num_txns as u64 - 1;
         // We need to calculate the SMT at the end of the chunk, if it is not already calculated.
@@ -292,33 +297,5 @@ impl InMemoryStateCalculatorV2 {
             .map(|(key, value)| (key.hash(), value.as_ref()));
         let new_checkpoint = latest_checkpoint.batch_update(smt_updates, usage, proof_reader)?;
         Ok(new_checkpoint)
-    }
-
-    fn validate_input_for_block(
-        base: &StateDelta,
-        to_commit: &TransactionsWithOutput,
-    ) -> Result<()> {
-        let num_txns = to_commit.len();
-        ensure!(num_txns != 0, "Empty block is not allowed.");
-        ensure!(
-            base.base_version == base.current_version,
-            "Block base state is not a checkpoint. base_version {:?}, current_version {:?}",
-            base.base_version,
-            base.current_version,
-        );
-        ensure!(
-            base.updates_since_base.is_empty(),
-            "Base state is corrupted, updates_since_base is not empty at a checkpoint."
-        );
-
-        for (i, (txn, _txn_out, is_reconfig)) in to_commit.iter().enumerate() {
-            ensure!(
-                TransactionsWithOutput::need_checkpoint(txn, is_reconfig) ^ (i != num_txns - 1),
-                "Checkpoint is allowed iff it's the last txn in the block. index: {i}, num_txns: {num_txns}, is_last: {}, txn: {txn:?}, is_reconfig: {}",
-                i == num_txns - 1,
-                is_reconfig,
-            );
-        }
-        Ok(())
     }
 }

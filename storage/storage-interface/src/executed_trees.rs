@@ -1,10 +1,7 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    cached_state_view::CachedStateView,
-    state_delta::StateDelta, DbReader,
-};
+use crate::{cached_state_view::CachedStateView, state_delta::StateDelta, DbReader};
 use aptos_crypto::HashValue;
 use aptos_types::{
     proof::accumulator::{InMemoryAccumulator, InMemoryTransactionAccumulator},
@@ -52,10 +49,7 @@ impl ExecutedTrees {
         state: Arc<StateDelta>,
         transaction_accumulator: Arc<InMemoryTransactionAccumulator>,
     ) -> Self {
-        assert_eq!(
-            state.next_version(),
-            transaction_accumulator.num_leaves()
-        );
+        assert_eq!(state.next_version(), transaction_accumulator.num_leaves());
         Self {
             state,
             transaction_accumulator,

@@ -5,7 +5,6 @@ use crate::{
     metrics,
     metrics::{EXECUTOR_ERRORS, OTHER_TIMERS},
 };
-use aptos_experimental_layered_map::LayeredMap;
 use anyhow::{anyhow, Result};
 use aptos_crypto::HashValue;
 use aptos_executor_service::{
@@ -16,10 +15,14 @@ use aptos_executor_types::{
     execution_output::ExecutionOutput, planned::Planned, should_forward_to_subscription_service,
     transactions_with_output::TransactionsWithOutput,
 };
+use aptos_experimental_layered_map::LayeredMap;
 use aptos_experimental_runtimes::thread_manager::THREAD_MANAGER;
 use aptos_logger::prelude::*;
 use aptos_metrics_core::TimerHelper;
-use aptos_storage_interface::cached_state_view::{CachedStateView, StateCache};
+use aptos_storage_interface::{
+    cached_state_view::{CachedStateView, StateCache},
+    state_delta::{InMemState, StateDelta, StateUpdate},
+};
 use aptos_types::{
     block_executor::{
         config::BlockExecutorConfigFromOnchain,
@@ -41,7 +44,6 @@ use aptos_types::{
 use aptos_vm::VMExecutor;
 use itertools::Itertools;
 use std::{iter, sync::Arc};
-use aptos_storage_interface::state_delta::{InMemState, StateDelta, StateUpdate};
 
 pub struct DoGetExecutionOutput;
 
@@ -496,16 +498,17 @@ impl Parser {
             .iter()
             .map(TransactionOutput::write_set);
         if let Some(idx) = to_commit.get_last_checkpoint_index() {
-            let last_checkpoint_state = state_cache.speculative_state.update(
-                write_sets.by_ref().take(idx + 1)
-            );
+            let last_checkpoint_state = state_cache
+                .speculative_state
+                .update(write_sets.by_ref().take(idx + 1));
             let result_state = if idx + 1 == to_commit.len() {
                 last_checkpoint_state.clone()
             } else {
                 StateDelta::new(
                     state_cache.speculative_state.base.clone(),
                     last_checkpoint_state.clone(),
-                ).update(write_sets)
+                )
+                .update(write_sets)
             };
             (Some(last_checkpoint_state), result_state)
         } else {

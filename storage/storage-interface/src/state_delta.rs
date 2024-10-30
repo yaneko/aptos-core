@@ -1,17 +1,16 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use derive_more::Deref;
 use aptos_crypto::HashValue;
 use aptos_experimental_layered_map::{LayeredMap, MapLayer};
 use aptos_types::{
     state_store::{
-        state_storage_usage::StateStorageUsage, state_value::StateValue,
+        state_key::StateKey, state_storage_usage::StateStorageUsage, state_value::StateValue,
     },
     transaction::Version,
+    write_set::{TransactionWrite, WriteSet},
 };
-use aptos_types::state_store::state_key::StateKey;
-use aptos_types::write_set::{TransactionWrite, WriteSet};
+use derive_more::Deref;
 use itertools::Itertools;
 
 #[derive(Clone, Debug)]
@@ -38,6 +37,17 @@ impl InMemState {
         // FIXME(aldenh): check call site and implement
         todo!()
     }
+
+    pub fn next_version(&self) -> Version {
+        self.next_version
+    }
+
+    pub fn into_delta(self, base: InMemState) -> StateDelta {
+        StateDelta::new(
+            base,
+            self,
+        )
+    }
 }
 
 /// Represents all state updates in the (base, current] range
@@ -51,10 +61,7 @@ pub struct StateDelta {
 }
 
 impl StateDelta {
-    pub fn new(
-        base: InMemState,
-        current: InMemState,
-    ) -> Self {
+    pub fn new(base: InMemState, current: InMemState) -> Self {
         let updates = current.updates.view_layers_after(&base.updates);
         Self {
             base,
@@ -111,7 +118,7 @@ impl StateDelta {
     }
 
     pub fn next_version(&self) -> Version {
-        self.current.next_version
+        self.current.next_version()
     }
 
     pub fn base_version(&self) -> Option<Version> {
@@ -126,18 +133,21 @@ impl StateDelta {
         todo!()
     }
 
-    pub fn update<'a>(
-        &self,
-        write_sets: impl IntoIterator<Item = &'a WriteSet>,
-    ) -> InMemState {
+    pub fn update<'a>(&self, write_sets: impl IntoIterator<Item = &'a WriteSet>) -> InMemState {
         let mut next_version = self.next_version();
-        let kvs = write_sets.into_iter().flat_map(|write_set| {
-            write_set.iter().map(move |(state_key, write_op)| {
-                let version = next_version;
-                next_version += 1;
-                (state_key.clone(), StateUpdate::new(version, write_op.as_state_value()))
+        let kvs = write_sets
+            .into_iter()
+            .flat_map(|write_set| {
+                write_set.iter().map(move |(state_key, write_op)| {
+                    let version = next_version;
+                    next_version += 1;
+                    (
+                        state_key.clone(),
+                        StateUpdate::new(version, write_op.as_state_value()),
+                    )
+                })
             })
-        }).collect_vec();
+            .collect_vec();
         let updates = self.updates.new_layer(&kvs);
         let usage = Self::caculate_usage(self.current.usage, &kvs);
 
@@ -148,12 +158,13 @@ impl StateDelta {
         }
     }
 
-
-    fn caculate_usage(_base_usage: StateStorageUsage, _updates: &[(StateKey, StateUpdate)]) -> StateStorageUsage {
+    fn caculate_usage(
+        _base_usage: StateStorageUsage,
+        _updates: &[(StateKey, StateUpdate)],
+    ) -> StateStorageUsage {
         // FIXME(aldenhu)
         todo!()
     }
-
 }
 
 impl Default for StateDelta {
