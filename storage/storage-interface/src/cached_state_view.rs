@@ -143,7 +143,8 @@ impl CachedStateView {
 pub struct StateCache {
     /// The state being read from the `CachedStateView`.
     pub speculative_state: StateDelta,
-    /// KVs got read at the latest_state version during the lifetime of the CachedStateView.
+    /// KVs got read from the DB at the base of `speculative_state` during the lifetime of the
+    /// CachedStateView
     pub sharded_state_cache: ShardedStateCache,
 }
 

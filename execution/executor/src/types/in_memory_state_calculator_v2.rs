@@ -13,6 +13,7 @@ use aptos_metrics_core::TimerHelper;
 use aptos_scratchpad::FrozenSparseMerkleTree;
 use aptos_storage_interface::{
     cached_state_view::{ShardedStateCache, StateCache},
+    state_authenticator::StateAuthenticator,
     state_delta::StateDelta,
 };
 use aptos_types::{
@@ -26,7 +27,6 @@ use dashmap::DashMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
-use aptos_storage_interface::state_authenticator::StateAuthenticator;
 
 /// FIXME(aldenhu): rename
 /// Helper class for calculating state changes after a block of transactions are executed.

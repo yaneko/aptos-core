@@ -335,9 +335,7 @@ where
         } else {
             output.set_state_checkpoint_output(DoStateCheckpoint::run(
                 &parent_output.execution_output,
-                &parent_output
-                    .expect_state_checkpoint_output()
-                    .state_auth,
+                &parent_output.expect_state_checkpoint_output().state_auth,
                 None, // known_state_checkpoints
             )?);
 

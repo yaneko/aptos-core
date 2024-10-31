@@ -27,9 +27,9 @@ impl StateUpdate {
 
 #[derive(Clone, Debug)]
 pub struct InMemState {
-    pub next_version: Version,
-    pub updates: MapLayer<StateKey, StateUpdate>,
-    pub usage: StateStorageUsage,
+    next_version: Version,
+    updates: MapLayer<StateKey, StateUpdate>,
+    usage: StateStorageUsage,
 }
 
 impl InMemState {
@@ -42,11 +42,16 @@ impl InMemState {
         self.next_version
     }
 
+    pub fn updates(&self) -> &MapLayer<StateKey, StateUpdate> {
+        &self.updates
+    }
+
+    pub fn usage(&self) -> StateStorageUsage {
+        self.usage
+    }
+
     pub fn into_delta(self, base: InMemState) -> StateDelta {
-        StateDelta::new(
-            base,
-            self,
-        )
+        StateDelta::new(base, self)
     }
 }
 
@@ -62,7 +67,7 @@ pub struct StateDelta {
 
 impl StateDelta {
     pub fn new(base: InMemState, current: InMemState) -> Self {
-        let updates = current.updates.view_layers_after(&base.updates);
+        let updates = current.updates().view_layers_after(&base.updates());
         Self {
             base,
             current,

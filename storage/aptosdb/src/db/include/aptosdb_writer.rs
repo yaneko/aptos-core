@@ -21,7 +21,7 @@ impl DbWriter for AptosDB {
                 .expect("Concurrent committing detected.");
             let _timer = OTHER_TIMERS_SECONDS.timer_with(&["pre_commit_ledger"]);
 
-            chunk.latest_in_memory_state.current.log_generation("db_save");
+            chunk.state_auth.global_state.log_generation("db_save");
 
             self.pre_commit_validation(&chunk)?;
             let _new_root_hash = self.calculate_and_commit_ledger_and_state_kv(
@@ -229,38 +229,16 @@ impl AptosDB {
             !chunk.is_empty(),
             "chunk is empty, nothing to save.",
         );
-        ensure!(
-            Some(chunk.expect_last_version()) == chunk.latest_in_memory_state.current_version,
-            "the last_version {:?} to commit doesn't match the current_version {:?} in latest_in_memory_state",
-            chunk.expect_last_version(),
-            chunk.latest_in_memory_state.current_version.expect("Must exist"),
-        );
 
-        let num_transactions_in_db = self.get_pre_committed_version()?.map_or(0, |v| v + 1);
         {
-            let buffered_state = self.state_store.buffered_state().lock();
+            // FIXME(aldenhu): track outside of BufferedState
+            let locked = self.state_store.buffered_state().lock();
             ensure!(
-                chunk.base_state_version == buffered_state.current_state().base_version,
-                "base_state_version {:?} does not equal to the base_version {:?} in buffered state with current version {:?}",
-                chunk.base_state_version,
-                buffered_state.current_state().base_version,
-                buffered_state.current_state().current_version,
-            );
-
-            // Ensure the incoming committing requests are always consecutive and the version in
-            // buffered state is consistent with that in db.
-            let next_version_in_buffered_state = buffered_state
-                .current_state()
-                .current_version
-                .map(|version| version + 1)
-                .unwrap_or(0);
-            ensure!(num_transactions_in_db == chunk.first_version && num_transactions_in_db == next_version_in_buffered_state,
-                "The first version passed in ({}), the next version in buffered state ({}) and the next version in db ({}) are inconsistent.",
-                chunk.first_version,
-                next_version_in_buffered_state,
-                num_transactions_in_db,
+                locked.current_state().is_the_same(chunk.parent_state),
+                "Not committing consecutively."
             );
         }
+        // FIXME(aldenhu): check parent accumulator, parent state, and parent auth
 
         Ok(())
     }
@@ -341,11 +319,10 @@ impl AptosDB {
         let sharded_state_kv_batches = new_sharded_kv_schema_batch();
         let state_kv_metadata_batch = SchemaBatch::new();
 
-        // TODO(grao): Make state_store take sharded state updates.
         self.state_store.put_value_sets(
             chunk.transaction_outputs.iter().map(TransactionOutput::write_set),
             chunk.first_version,
-            chunk.latest_in_memory_state.current.usage(),
+            chunk.state.usage(),
             chunk.sharded_state_cache,
             &ledger_metadata_batch,
             &sharded_state_kv_batches,

@@ -8,7 +8,7 @@ use crate::{planned::Planned, transactions_with_output::TransactionsWithOutput};
 use aptos_drop_helper::DropHelper;
 use aptos_storage_interface::{
     cached_state_view::StateCache,
-    state_delta::{InMemState, StateDelta},
+    state_delta::{InMemState},
 };
 use aptos_types::{
     contract_event::ContractEvent,
@@ -40,12 +40,10 @@ impl ExecutionOutput {
         result_state: InMemState,
         subscribable_events: Planned<Vec<ContractEvent>>,
     ) -> Self {
-        assert_eq!(
-            first_version, parent_state.next_version(),
-        );
-        assert_eq!(
-            first_version + to_commit.len(), result_state.next_version(),
-        );
+        assert_eq!(first_version, parent_state.next_version());
+        let next_version = first_version + to_commit.len() as Version;
+        assert_eq!(next_version, result_state.next_version());
+
         if is_block {
             // If it's a block, ensure it ends with state checkpoint.
             assert!(
@@ -53,9 +51,7 @@ impl ExecutionOutput {
                     || to_commit.is_empty() // reconfig suffix
                     || to_commit.transactions.last().unwrap().is_non_reconfig_block_ending()
             );
-            assert!(
-                last_checkpoint_state.is_none()
-            );
+            assert!(last_checkpoint_state.is_none());
         } else {
             // If it's not, there shouldn't be any transaction to be discarded or retried.
             assert!(to_discard.is_empty() && to_retry.is_empty());

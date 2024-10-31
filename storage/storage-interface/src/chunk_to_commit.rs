@@ -6,18 +6,23 @@ use aptos_types::{
     state_store::{state_key::StateKey, state_value::StateValue},
     transaction::{Transaction, TransactionInfo, TransactionOutput, Version},
 };
-use std::collections::HashMap;
+use crate::state_authenticator::StateAuthenticator;
+use crate::state_delta::InMemState;
 
+/// FIXME(aldenhu): clean up unused fields
 #[derive(Clone)]
 pub struct ChunkToCommit<'a> {
     pub first_version: Version,
     pub transactions: &'a [Transaction],
-    // TODO(aldenhu): make it a ref
     pub transaction_outputs: &'a [TransactionOutput],
     pub transaction_infos: &'a [TransactionInfo],
     pub base_state_version: Option<Version>,
-    pub latest_in_memory_state: &'a StateDelta,
-    pub state_updates_until_last_checkpoint: Option<&'a HashMap<StateKey, Option<StateValue>>>,
+    pub parent_state: &'a InMemState,
+    pub state: &'a InMemState,
+    pub parent_auth: &'a StateAuthenticator,
+    pub state_auth: &'a StateAuthenticator,
+    pub last_checkpoint_state: Option<&'a InMemState>,
+    pub last_checkpoint_auth: Option<&'a StateAuthenticator>,
     pub sharded_state_cache: Option<&'a ShardedStateCache>,
     pub is_reconfig: bool,
 }

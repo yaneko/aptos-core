@@ -23,6 +23,8 @@ use std::{
     },
     thread::JoinHandle,
 };
+use aptos_storage_interface::state_authenticator::StateAuthenticator;
+use aptos_storage_interface::state_delta::InMemState;
 
 pub(crate) const ASYNC_COMMIT_CHANNEL_BUFFER_SIZE: u64 = 1;
 pub(crate) const TARGET_SNAPSHOT_INTERVAL_IN_VERSION: u64 = 100_000;
@@ -35,10 +37,13 @@ pub(crate) const TARGET_SNAPSHOT_INTERVAL_IN_VERSION: u64 = 100_000;
 /// state_until_checkpoint.current = state_after_checkpoint.base, same for their versions.
 #[derive(Debug)]
 pub struct BufferedState {
-    // state until the latest checkpoint.
-    state_until_checkpoint: Option<Box<StateDelta>>,
-    // state after the latest checkpoint.
-    state_after_checkpoint: StateDelta,
+    committed_state: InMemState,
+    committed_auth: StateAuthenticator,
+    last_checkpoint_state: InMemState,
+    last_checkpoint_auth: StateAuthenticator,
+    latest_state: InMemState,
+    latest_auth: StateAuthenticator,
+
     state_commit_sender: SyncSender<CommitMessage<Arc<StateDelta>>>,
     target_items: usize,
     join_handle: Option<JoinHandle<()>>,
@@ -85,7 +90,7 @@ impl BufferedState {
         (myself, smt_ancestors)
     }
 
-    pub fn current_state(&self) -> &StateDelta {
+    pub fn current_state(&self) -> &StateAuthenticator {
         &self.state_after_checkpoint
     }
 
