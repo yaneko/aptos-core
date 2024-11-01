@@ -43,7 +43,7 @@ use aptos_transaction_generator_lib::{
     TransactionType::{self, CoinTransfer},
 };
 use aptos_types::on_chain_config::Features;
-use aptos_vm::VMBlockExecutor;
+use aptos_vm::{aptos_vm::AptosVMBlockExecutor, VMBlockExecutor};
 use db_reliable_submitter::DbReliableTransactionSubmitter;
 use metrics::TIMER;
 use pipeline::PipelineConfig;
@@ -56,11 +56,8 @@ use std::{
 };
 use tokio::runtime::Runtime;
 
-pub fn init_db_and_executor<V>(config: &NodeConfig) -> (DbReaderWriter, BlockExecutor<V>)
-where
-    V: VMBlockExecutor,
-{
-    let db = DbReaderWriter::new(
+pub fn init_db(config: &NodeConfig) -> DbReaderWriter {
+    DbReaderWriter::new(
         AptosDB::open(
             config.storage.get_dir_paths(),
             false, /* readonly */
@@ -72,11 +69,7 @@ where
             None,
         )
         .expect("DB should open."),
-    );
-
-    let executor = BlockExecutor::new(db.clone());
-
-    (db, executor)
+    )
 }
 
 fn create_checkpoint(
@@ -132,7 +125,7 @@ pub fn run_benchmark<V>(
     config.storage.dir = checkpoint_dir.as_ref().to_path_buf();
     config.storage.storage_pruner_config = pruner_config;
     config.storage.rocksdb_configs.enable_storage_sharding = enable_storage_sharding;
-    let (db, executor) = init_db_and_executor::<V>(&config);
+    let db = init_db(&config);
     let root_account = TransactionGenerator::read_root_account(genesis_key, &db);
     let root_account = Arc::new(root_account);
 
@@ -167,7 +160,7 @@ pub fn run_benchmark<V>(
         let (main_signer_accounts, burner_accounts) =
             accounts_cache.split(num_main_signer_accounts);
 
-        let (transaction_generator_creator, phase) = init_workload::<V>(
+        let (transaction_generator_creator, phase) = init_workload::<AptosVMBlockExecutor>(
             transaction_mix.clone(),
             root_account.clone(),
             main_signer_accounts,
@@ -189,6 +182,7 @@ pub fn run_benchmark<V>(
     };
 
     let start_version = db.reader.expect_synced_version();
+    let executor = BlockExecutor::<V>::new(db.clone());
     let (pipeline, block_sender) =
         Pipeline::new(executor, start_version, &pipeline_config, Some(num_blocks));
 
@@ -382,7 +376,8 @@ fn add_accounts_impl<V>(
     config.storage.dir = output_dir.as_ref().to_path_buf();
     config.storage.storage_pruner_config = pruner_config;
     config.storage.rocksdb_configs.enable_storage_sharding = enable_storage_sharding;
-    let (db, executor) = init_db_and_executor::<V>(&config);
+    let db = init_db(&config);
+    let executor = BlockExecutor::<V>::new(db.clone());
 
     let start_version = db.reader.get_latest_ledger_info_version().unwrap();
 
@@ -771,7 +766,7 @@ mod tests {
     use crate::{
 
         db_generator::bootstrap_with_genesis,
-        init_db_and_executor,
+        init_db,
         native::{
             aptos_vm_uncoordinated::AptosVMParallelUncoordinatedBlockExecutor,
             native_config::NativeConfig,
@@ -788,104 +783,232 @@ mod tests {
     };
     use aptos_config::config::NO_OP_STORAGE_PRUNER_CONFIG;
     use aptos_crypto::HashValue;
+    use aptos_executor::block_executor::BlockExecutor;
     use aptos_executor_types::BlockExecutorTrait;
     use aptos_sdk::{transaction_builder::aptos_stdlib, types::LocalAccount};
     use aptos_temppath::TempPath;
     use aptos_transaction_generator_lib::{args::TransactionTypeArg, WorkflowProgress};
     use aptos_types::{
+        access_path::Path,
+        account_address::AccountAddress,
         on_chain_config::{FeatureFlag, Features},
-        transaction::Transaction,
+        state_store::state_key::inner::StateKeyInner,
+        transaction::{Transaction, TransactionPayload},
     };
     use aptos_vm::{aptos_vm::AptosVMBlockExecutor, AptosVM, VMBlockExecutor};
+    use itertools::Itertools;
+    use move_core_types::language_storage::StructTag;
     use rand::thread_rng;
-    use std::fs;
+    use std::{
+        collections::{BTreeMap, HashMap},
+        fs,
+    };
+
+    #[test]
+    fn test_compare_vm_and_vm_uncoordinated() {
+        test_compare_prod_and_another_all_types::<AptosVMParallelUncoordinatedBlockExecutor>(true);
+    }
 
     #[test]
     fn test_compare_vm_and_native() {
+        test_compare_prod_and_another_all_types::<NativeVMBlockExecutor>(false);
+    }
+
+    #[test]
+    fn test_compare_vm_and_native_parallel_uncoordinated() {
+        test_compare_prod_and_another_all_types::<
+            NativeParallelUncoordinatedBlockExecutor<NativeRawTransactionExecutor>,
+        >(false);
+    }
+
+    fn test_compare_prod_and_another_all_types<E: VMBlockExecutor>(values_match: bool) {
+        let mut non_fa_features = Features::default();
+        non_fa_features.disable(FeatureFlag::NEW_ACCOUNTS_DEFAULT_TO_FA_APT_STORE);
+        non_fa_features.disable(FeatureFlag::OPERATIONS_DEFAULT_TO_FA_APT_STORE);
+        // non_fa_features.disable(FeatureFlag::MODULE_EVENT_MIGRATION);
+        // non_fa_features.disable(FeatureFlag::COIN_TO_FUNGIBLE_ASSET_MIGRATION);
+
+        test_compare_prod_and_another::<E>(values_match, non_fa_features.clone(), |address| {
+            aptos_stdlib::aptos_account_transfer(address, 1000)
+        });
+
+        test_compare_prod_and_another::<E>(
+            values_match,
+            non_fa_features,
+            aptos_stdlib::aptos_account_create_account,
+        );
+
+        let mut fa_features = Features::default();
+        fa_features.enable(FeatureFlag::NEW_ACCOUNTS_DEFAULT_TO_FA_APT_STORE);
+        fa_features.enable(FeatureFlag::OPERATIONS_DEFAULT_TO_FA_APT_STORE);
+        fa_features.disable(FeatureFlag::CONCURRENT_FUNGIBLE_BALANCE);
+
+        test_compare_prod_and_another::<E>(values_match, fa_features.clone(), |address| {
+            aptos_stdlib::aptos_account_fungible_transfer_only(address, 1000)
+        });
+
+        test_compare_prod_and_another::<E>(values_match, fa_features.clone(), |address| {
+            aptos_stdlib::aptos_account_transfer(address, 1000)
+        });
+
+        test_compare_prod_and_another::<E>(
+            values_match,
+            fa_features,
+            aptos_stdlib::aptos_account_create_account,
+        );
+    }
+
+    fn test_compare_prod_and_another<E: VMBlockExecutor>(
+        values_match: bool,
+        features: Features,
+        txn_payload_f: impl Fn(AccountAddress) -> TransactionPayload,
+    ) {
         aptos_logger::Logger::new().init();
 
         let db_dir = TempPath::new();
 
         fs::create_dir_all(db_dir.as_ref()).unwrap();
 
-        let mut init_features = Features::default();
-        init_features.enable(FeatureFlag::NEW_ACCOUNTS_DEFAULT_TO_FA_APT_STORE);
-        init_features.enable(FeatureFlag::OPERATIONS_DEFAULT_TO_FA_APT_STORE);
-
-        bootstrap_with_genesis(&db_dir, false, init_features.clone());
+        bootstrap_with_genesis(&db_dir, false, features.clone());
 
         let (mut config, genesis_key) =
-            aptos_genesis::test_utils::test_config_with_custom_features(init_features);
+            aptos_genesis::test_utils::test_config_with_custom_features(features);
         config.storage.dir = db_dir.as_ref().to_path_buf();
         config.storage.storage_pruner_config = NO_OP_STORAGE_PRUNER_CONFIG;
         config.storage.rocksdb_configs.enable_storage_sharding = false;
 
-        let _txn = {
-            let (vm_db, vm_executor) = init_db_and_executor::<AptosVMBlockExecutor>(&config);
+        let (txn, vm_result) = {
+            let vm_db = init_db(&config);
+            let vm_executor = BlockExecutor::<AptosVMBlockExecutor>::new(vm_db.clone());
+
             let root_account = TransactionGenerator::read_root_account(genesis_key, &vm_db);
             let dst = LocalAccount::generate(&mut thread_rng());
-            let num_coins = 1000;
 
             let txn_factory = TransactionGenerator::create_transaction_factory();
-            let txn = Transaction::UserTransaction(root_account.sign_with_transaction_builder(
-                txn_factory.payload(aptos_stdlib::aptos_account_fungible_transfer_only(
-                    dst.address(),
-                    num_coins,
-                )),
-            ));
+            let txn =
+                Transaction::UserTransaction(root_account.sign_with_transaction_builder(
+                    txn_factory.payload(txn_payload_f(dst.address())),
+                ));
+            let parent_block_id = vm_executor.committed_block_id();
+            let block_id = HashValue::random();
             vm_executor
                 .execute_and_state_checkpoint(
-                    (HashValue::zero(), vec![txn.clone()]).into(),
-                    vm_executor.committed_block_id(),
+                    (block_id, vec![txn.clone()]).into(),
+                    parent_block_id,
                     BENCHMARKS_BLOCK_EXECUTOR_ONCHAIN_CONFIG,
                 )
                 .unwrap();
 
-            txn
+            let result = vm_executor
+                .ledger_update(block_id, parent_block_id)
+                .unwrap()
+                .execution_output;
+            result.check_aborts_discards_retries(false, false, false);
+            (txn, result)
         };
 
-        let (_native_db, native_executor) = init_db_and_executor::<NativeVMBlockExecutor>(&config);
-        native_executor
+        let other_db = init_db(&config);
+        let other_executor = BlockExecutor::<AptosVMBlockExecutor>::new(other_db.clone());
+
+        let parent_block_id = other_executor.committed_block_id();
+        let block_id = HashValue::random();
+        other_executor
             .execute_and_state_checkpoint(
-                (HashValue::zero(), vec![txn]).into(),
-                native_executor.committed_block_id(),
+                (block_id, vec![txn]).into(),
+                parent_block_id,
                 BENCHMARKS_BLOCK_EXECUTOR_ONCHAIN_CONFIG,
             )
             .unwrap();
+        let other_result = other_executor
+            .ledger_update(block_id, parent_block_id)
+            .unwrap()
+            .execution_output;
+        other_result.check_aborts_discards_retries(false, false, false);
 
-        // let (
-        //     vm_txns,
-        //     _vm_state_updates_vec,
-        //     _vm_state_checkpoint_hashes,
-        //     _vm_state_updates_before_last_checkpoint,
-        //     _vm_sharded_state_cache,
-        //     _vm_block_end_info,
-        // ) = vm_result.into_inner();
-        // let (vm_statuses_for_input_txns,
-        //     vm_to_commit,
-        //     vm_to_discard,
-        //     vm_to_retry,
-        // ) = vm_txns.into_inner();
+        let vm_to_commit = &vm_result.to_commit;
+        let other_to_commit = &other_result.to_commit;
 
-        // let (
-        //     native_txns,
-        //     _native_state_updates_vec,
-        //     _native_state_checkpoint_hashes,
-        //     _native_state_updates_before_last_checkpoint,
-        //     _native_sharded_state_cache,
-        //     _native_block_end_info,
-        // ) = native_result.into_inner();
-        // let (native_statuses_for_input_txns,
-        //     native_to_commit,
-        //     native_to_discard,
-        //     native_to_retry,
-        // ) = native_txns.into_inner();
+        assert_eq!(2, vm_to_commit.transaction_outputs().len());
+        let vm_txn_output = &vm_to_commit.transaction_outputs()[0];
+        let vm_cp_txn_output = &vm_to_commit.transaction_outputs()[1];
 
-        // println!("{:?}", vm_to_commit.parsed_outputs());
-        // assert_eq!(vm_statuses_for_input_txns, native_statuses_for_input_txns);
-        // assert_eq!(vm_to_commit, native_to_commit);
-        // assert_eq!(vm_to_discard, native_to_discard);
-        // assert_eq!(vm_to_retry, native_to_retry);
+        assert_eq!(2, other_to_commit.transaction_outputs().len());
+        let other_txn_output = &other_to_commit.transaction_outputs()[0];
+        let other_cp_txn_output = &other_to_commit.transaction_outputs()[1];
+
+        assert_eq!(vm_cp_txn_output, other_cp_txn_output);
+
+        let vm_event_types = vm_txn_output
+            .events()
+            .iter()
+            .map(|event| event.type_tag().clone())
+            .sorted()
+            .collect::<Vec<_>>();
+        let other_event_types = other_txn_output
+            .events()
+            .iter()
+            .map(|event| event.type_tag().clone())
+            .sorted()
+            .collect::<Vec<_>>();
+        assert_eq!(vm_event_types, other_event_types);
+
+        if values_match {
+            for (event1, event2) in vm_txn_output
+                .events()
+                .iter()
+                .zip_eq(other_txn_output.events().iter())
+            {
+                assert_eq!(event1, event2);
+            }
+        }
+
+        let vm_writes = vm_txn_output
+            .write_set()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<HashMap<_, _>>();
+        let other_writes = other_txn_output
+            .write_set()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<HashMap<_, _>>();
+        for (key, value) in vm_writes.iter() {
+            if let StateKeyInner::AccessPath(apath) = key.inner() {
+                if let Path::ResourceGroup(_) = apath.get_path() {
+                    let vm_resources =
+                        bcs::from_bytes::<BTreeMap<StructTag, Vec<u8>>>(value.bytes().unwrap())
+                            .unwrap();
+                    let other_resources =
+                        other_writes
+                            .get(key)
+                            .map_or_else(BTreeMap::new, |other_value| {
+                                bcs::from_bytes::<BTreeMap<StructTag, Vec<u8>>>(
+                                    other_value.bytes().unwrap(),
+                                )
+                                .unwrap()
+                            });
+
+                    assert_eq!(
+                        vm_resources.keys().collect::<Vec<_>>(),
+                        other_resources.keys().collect::<Vec<_>>()
+                    );
+                    if values_match {
+                        assert_eq!(vm_resources, other_resources);
+                    }
+                }
+            }
+
+            assert!(other_writes.contains_key(key), "missing: {:?}", key);
+            if values_match {
+                let other_value = other_writes.get(key).unwrap();
+                assert_eq!(value, other_value, "different value for key: {:?}", key);
+            }
+        }
+        assert_eq!(vm_writes.len(), other_writes.len());
+
+        if values_match {
+            assert_eq!(vm_txn_output, other_txn_output);
+        }
     }
 
     fn test_generic_benchmark<E>(
@@ -980,7 +1103,7 @@ mod tests {
         // correct execution not yet implemented, so cannot be checked for validity
         test_generic_benchmark::<
             NativeParallelUncoordinatedBlockExecutor<NativeRawTransactionExecutor>,
-        >(Some(TransactionTypeArg::AptFaTransfer), false);
+        >(Some(TransactionTypeArg::NoOp), false);
     }
 
     #[test]
@@ -988,7 +1111,7 @@ mod tests {
         // correct execution not yet implemented, so cannot be checked for validity
         test_generic_benchmark::<
             NativeParallelUncoordinatedBlockExecutor<NativeValueCacheRawTransactionExecutor>,
-        >(Some(TransactionTypeArg::AptFaTransfer), false);
+        >(Some(TransactionTypeArg::NoOp), false);
     }
 
     #[test]
@@ -996,6 +1119,6 @@ mod tests {
         // correct execution not yet implemented, so cannot be checked for validity
         test_generic_benchmark::<
             NativeParallelUncoordinatedBlockExecutor<NativeNoStorageRawTransactionExecutor>,
-        >(Some(TransactionTypeArg::AptFaTransfer), false);
+        >(Some(TransactionTypeArg::NoOp), false);
     }
 }
