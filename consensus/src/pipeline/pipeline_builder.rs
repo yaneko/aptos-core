@@ -221,7 +221,7 @@ impl PipelineBuilder {
 
     pub fn build(
         &self,
-        parent: &PipelineFutures,
+        parent: PipelineFutures,
         block: Arc<Block>,
         block_store_callback: Box<dyn FnOnce(LedgerInfoWithSignatures) + Send + Sync>,
     ) -> (PipelineFutures, PipelineInputTx, Vec<AbortHandle>) {

@@ -346,6 +346,7 @@ impl BlockTree {
         let mut blocks_pruned = VecDeque::new();
         let mut blocks_to_be_pruned = vec![self.linkable_root()];
         while let Some(block_to_remove) = blocks_to_be_pruned.pop() {
+            block_to_remove.executed_block().abort_pipeline();
             // Add the children to the blocks to be pruned (if any), but stop when it reaches the
             // new root
             for child_id in block_to_remove.children() {
@@ -491,10 +492,9 @@ impl BlockTree {
     ) {
         let commit_proof = WrappedLedgerInfo::new(VoteData::dummy(), commit_decision);
 
-        // let block_to_commit = blocks_to_commit.last().expect("pipeline is empty").clone();
-        // update_counters_for_committed_blocks(blocks_to_commit);
         let current_round = self.commit_root().round();
         let committed_round = block_round;
+
         debug!(
             LogSchema::new(LogEvent::CommitViaBlock).round(current_round),
             committed_round = committed_round,
