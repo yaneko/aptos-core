@@ -207,7 +207,8 @@ impl BuildConfig {
         let config = self.compiler_config.clone(); // Need clone because of mut self
         let resolved_graph = self.resolution_graph_for_package(path, writer)?;
         let mutx = PackageLock::lock();
-        let ret = BuildPlan::create(resolved_graph)?.compile_no_exit(&config, writer);
+        let plan = BuildPlan::create(resolved_graph)?;
+        let ret = plan.compile_no_exit(&config, writer);
         mutx.unlock();
         ret
     }
