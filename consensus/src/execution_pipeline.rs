@@ -164,17 +164,17 @@ impl ExecutionPipeline {
         } = command;
         counters::PREPARE_BLOCK_WAIT_TIME.observe_duration(command_creation_time.elapsed());
         debug!("prepare_block received block {}.", block.id());
-        let input_txns = block_preparer
+        let prepare_result = block_preparer
             .prepare_block(block.block(), &block_window)
             .await;
-        if let Err(e) = input_txns {
+        if let Err(e) = prepare_result {
             result_tx
                 .send(Err(e))
                 .unwrap_or_else(log_failed_to_send_result("prepare_block", block.id()));
             return;
         }
         let validator_txns = block.validator_txns().cloned().unwrap_or_default();
-        let input_txns = input_txns.expect("input_txns must be Some.");
+        let (input_txns, max_txns_to_execute) = prepare_result.expect("input_txns must be Some.");
         tokio::task::spawn_blocking(move || {
             let txns_to_execute =
                 Block::combine_to_input_transactions(validator_txns, input_txns.clone(), metadata);
@@ -194,6 +194,7 @@ impl ExecutionPipeline {
             execute_block_tx
                 .send(ExecuteBlockCommand {
                     input_txns,
+                    max_txns_to_execute,
                     pipelined_block: block,
                     block: (block_id, sig_verified_txns).into(),
                     block_window,
@@ -230,6 +231,7 @@ impl ExecutionPipeline {
     ) {
         'outer: while let Some(ExecuteBlockCommand {
             input_txns: _,
+            max_txns_to_execute,
             pipelined_block,
             block,
             block_window,
@@ -311,7 +313,9 @@ impl ExecutionPipeline {
                             let transactions_len = transactions.len();
                             (
                                 transactions,
-                                Arc::new(BlockingTxnsProvider::new(transactions_len)),
+                                Arc::new(BlockingTxnsProvider::new(
+                                    max_txns_to_execute.unwrap_or(transactions_len as u64) as usize,
+                                )),
                             )
                         },
                         ExecutableTransactions::UnshardedBlocking(_) => {
@@ -339,6 +343,7 @@ impl ExecutionPipeline {
                         "Execution: Split validator txns from user txns in {} micros",
                         timer.elapsed().as_micros()
                     );
+                    // TODO: we could probably constrain this too with max_txns_to_execute
                     let shuffle_iterator = crate::transaction_shuffler::use_case_aware::iterator::ShuffledTransactionIterator::new(crate::transaction_shuffler::use_case_aware::Config {
                             sender_spread_factor: 32,
                             platform_use_case_spread_factor: 0,
@@ -586,6 +591,7 @@ struct PrepareBlockCommand {
 
 struct ExecuteBlockCommand {
     input_txns: Vec<SignedTransaction>,
+    max_txns_to_execute: Option<u64>,
     pipelined_block: PipelinedBlock,
     block: ExecutableBlock,
     block_window: OrderedBlockWindow,
