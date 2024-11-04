@@ -327,6 +327,7 @@ impl ExecutionPipeline {
                     }
                 });
 
+            let num_txns_to_execute = blocking_txns_provider.num_txns();
             let blocking_txns_writer = blocking_txns_provider.clone();
             let join_shuffle = tokio::task::spawn_blocking(move || {
                 // TODO: keep this previously split so we don't have to re-split it here
@@ -352,13 +353,15 @@ impl ExecutionPipeline {
                     for (idx, txn) in validator_txns
                         .into_iter()
                         .chain(shuffle_iterator)
+                        .take(num_txns_to_execute)
                         .enumerate()
                     {
                         blocking_txns_writer.set_txn(idx as TxnIndex, txn);
                     }
                 } else {
+                    // TODO: could num_txns_to_execute < number of validator txns?
                     // No user transactions in the block.
-                    for (idx, txn) in txns.into_iter().enumerate() {
+                    for (idx, txn) in txns.into_iter().take(num_txns_to_execute).enumerate() {
                         blocking_txns_writer.set_txn(idx as TxnIndex, txn);
                     }
                 }
