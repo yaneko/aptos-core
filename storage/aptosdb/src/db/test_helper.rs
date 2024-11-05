@@ -318,7 +318,7 @@ fn gen_snapshot_version(
         updates.extend(
             txns_to_commit[0..=idx]
                 .iter()
-                .flat_map(|x| x.write_set().state_updates()),
+                .flat_map(|x| x.write_set().state_updates_cloned()),
         );
         if updates.len() >= threshold {
             snapshot_version = Some(cur_ver + idx as u64);
@@ -327,13 +327,13 @@ fn gen_snapshot_version(
         updates.extend(
             txns_to_commit[idx + 1..]
                 .iter()
-                .flat_map(|x| x.write_set().state_updates()),
+                .flat_map(|x| x.write_set().state_updates_cloned()),
         );
     } else {
         updates.extend(
             txns_to_commit
                 .iter()
-                .flat_map(|x| x.write_set().state_updates()),
+                .flat_map(|x| x.write_set().state_updates_cloned()),
         );
     }
     snapshot_version

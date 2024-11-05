@@ -106,10 +106,9 @@ impl InMemoryStateCalculatorV2 {
             };
         let all_updates = {
             let _timer = OTHER_TIMERS.timer_with(&["combine_two_updates"]);
-            updates_before_last_checkpoint
-                .iter()
-                .chain(updates_after_last_checkpoint.iter())
-                .collect()
+            let mut all = updates_before_last_checkpoint.clone();
+            all.extend(updates_after_last_checkpoint.clone());
+            all
         };
 
         let usage = Self::calculate_usage(
@@ -178,13 +177,22 @@ impl InMemoryStateCalculatorV2 {
             .smt
         };
 
-        let updates_since_latest_checkpoint = if last_checkpoint_index.is_some() {
-            updates_after_last_checkpoint
-        } else {
-            let mut updates_since_latest_checkpoint =
-                parent_state.updates_since_base.deref().deref().clone();
-            updates_since_latest_checkpoint.extend(updates_after_last_checkpoint);
-            updates_since_latest_checkpoint
+        let (updates_before_last_checkpoint, updates_after_last_checkpoint) = {
+            let _timer = OTHER_TIMERS.timer_with(&["clone_updates"]);
+            (
+                Self::clone_updates(&updates_before_last_checkpoint),
+                Self::clone_updates(&updates_after_last_checkpoint),
+            )
+        };
+
+        let updates_since_latest_checkpoint = {
+            if last_checkpoint_index.is_some() {
+                updates_after_last_checkpoint
+            } else {
+                let mut ret = parent_state.updates_since_base.deref().deref().clone();
+                ret.extend(updates_after_last_checkpoint);
+                ret
+            }
         };
 
         info!(
@@ -211,23 +219,34 @@ impl InMemoryStateCalculatorV2 {
         ))
     }
 
-    fn calculate_updates(write_sets: &[&WriteSet]) -> HashMap<StateKey, Option<StateValue>> {
+    fn calculate_updates<'a>(
+        write_sets: &[&'a WriteSet],
+    ) -> HashMap<&'a StateKey, Option<&'a StateValue>> {
         let _timer = OTHER_TIMERS.timer_with(&["calculate_updates"]);
         write_sets
+            .iter()
+            .flat_map(|w| w.state_update_refs())
+            .collect()
+    }
+
+    fn clone_updates(
+        updates: &HashMap<&StateKey, Option<&StateValue>>,
+    ) -> HashMap<StateKey, Option<StateValue>> {
+        updates
             .par_iter()
-            .flat_map(|w| w.state_updates().collect_vec())
+            .map(|(k, v)| ((*k).clone(), v.cloned()))
             .collect()
     }
 
     fn add_to_delta(
         k: &StateKey,
-        v: &Option<StateValue>,
+        v: &Option<&StateValue>,
         state_cache: &DashMap<StateKey, (Option<Version>, Option<StateValue>)>,
         items_delta: &mut i64,
         bytes_delta: &mut i64,
     ) {
         let key_size = k.size();
-        if let Some(ref value) = v {
+        if let Some(value) = v {
             *items_delta += 1;
             *bytes_delta += (key_size + value.size()) as i64;
         }
@@ -242,7 +261,7 @@ impl InMemoryStateCalculatorV2 {
     fn calculate_usage(
         old_usage: StateStorageUsage,
         sharded_state_cache: &ShardedStateCache,
-        updates: &HashMap<&StateKey, &Option<StateValue>>,
+        updates: &HashMap<&StateKey, Option<&StateValue>>,
     ) -> StateStorageUsage {
         let _timer = OTHER_TIMERS
             .with_label_values(&["calculate_usage"])
@@ -279,7 +298,7 @@ impl InMemoryStateCalculatorV2 {
 
     fn make_checkpoint(
         latest_checkpoint: FrozenSparseMerkleTree<StateValue>,
-        updates: &HashMap<StateKey, Option<StateValue>>,
+        updates: &HashMap<&StateKey, Option<&StateValue>>,
         usage: StateStorageUsage,
         proof_reader: &ProofReader,
     ) -> Result<FrozenSparseMerkleTree<StateValue>> {
@@ -288,10 +307,14 @@ impl InMemoryStateCalculatorV2 {
         // Update SMT.
         //
         // TODO(aldenhu): avoid collecting into vec
-        let smt_updates = updates
-            .iter()
-            .map(|(key, value)| (key.hash(), value.as_ref()));
-        let new_checkpoint = latest_checkpoint.batch_update(smt_updates, usage, proof_reader)?;
+        let smt_updates = {
+            let _timer = OTHER_TIMERS.timer_with(&["make_smt_updates"]);
+            updates.iter().map(|(key, value)| (key.hash(), *value))
+        };
+        let new_checkpoint = {
+            let _timer = OTHER_TIMERS.timer_with(&["smt_batch_update"]);
+            latest_checkpoint.batch_update(smt_updates, usage, proof_reader)?
+        };
         Ok(new_checkpoint)
     }
 

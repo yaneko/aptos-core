@@ -170,6 +170,15 @@ impl WriteOp {
         Ok(())
     }
 
+    pub fn ref_state_value(&self) -> Option<&StateValue> {
+        use WriteOp::*;
+
+        match self {
+            Creation(v) | Modification(v) => Some(v),
+            Deletion(..) => None,
+        }
+    }
+
     pub fn bytes(&self) -> Option<&Bytes> {
         use WriteOp::*;
 
@@ -345,8 +354,7 @@ impl TransactionWrite for WriteOp {
     }
 
     fn as_state_value(&self) -> Option<StateValue> {
-        self.bytes()
-            .map(|bytes| StateValue::new_with_metadata(bytes.clone(), self.metadata().clone()))
+        self.ref_state_value().cloned()
     }
 
     // Note that even if WriteOp is DeletionWithMetadata, the method returns None, as a later
@@ -446,9 +454,15 @@ impl WriteSet {
         .expect("Must succeed")
     }
 
-    pub fn state_updates(&self) -> impl Iterator<Item = (StateKey, Option<StateValue>)> + '_ {
-        self.iter()
-            .map(|(key, op)| (key.clone(), op.as_state_value()))
+    pub fn state_update_refs(&self) -> impl Iterator<Item = (&StateKey, Option<&StateValue>)> + '_ {
+        self.iter().map(|(key, op)| (key, op.ref_state_value()))
+    }
+
+    pub fn state_updates_cloned(
+        &self,
+    ) -> impl Iterator<Item = (StateKey, Option<StateValue>)> + '_ {
+        self.state_update_refs()
+            .map(|(k, v)| (k.clone(), v.cloned()))
     }
 }
 

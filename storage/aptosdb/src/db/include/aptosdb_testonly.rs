@@ -216,7 +216,7 @@ impl ChunkToCommitOwned {
                     latest_checkpoint_version,
                     first_version + idx as u64
                 );
-                return Some(transaction_outputs[..=idx].iter().map(TransactionOutput::write_set).flat_map(WriteSet::state_updates).collect())
+                return Some(transaction_outputs[..=idx].iter().map(TransactionOutput::write_set).flat_map(WriteSet::state_updates_cloned).collect())
             }
         }
 
