@@ -34,11 +34,11 @@ use std::{
 /// A window of blocks that are needed for execution with the execution pool, EXCLUDING the current block
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OrderedBlockWindow {
-    blocks: Vec<Block>,
+    blocks: Vec<Arc<PipelinedBlock>>,
 }
 
 impl OrderedBlockWindow {
-    pub fn new(blocks: Vec<Block>) -> Self {
+    pub fn new(blocks: Vec<Arc<PipelinedBlock>>) -> Self {
         Self { blocks }
     }
 
@@ -46,7 +46,11 @@ impl OrderedBlockWindow {
         Self { blocks: vec![] }
     }
 
-    pub fn blocks(&self) -> &Vec<Block> {
+    pub fn blocks(&self) -> Vec<Block> {
+        self.blocks.iter().map(|b| b.block().clone()).collect()
+    }
+
+    pub fn pipelined_blocks(&self) -> &Vec<Arc<PipelinedBlock>> {
         &self.blocks
     }
 }
