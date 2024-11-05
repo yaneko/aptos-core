@@ -411,18 +411,18 @@ impl VMChangeSet {
             if let Some(write_op) = aggregator_v1_write_set.get_mut(&state_key) {
                 // In this case, delta follows a write op.
                 match write_op {
-                    Creation { data, .. } | Modification { data, .. } => {
+                    Creation(v) | Modification(v) => {
                         // Apply delta on top of creation or modification.
                         // TODO[agg_v1](cleanup): This will not be needed anymore once aggregator
                         // change sets carry non-serialized information.
-                        let base: u128 = bcs::from_bytes(data)
+                        let base: u128 = bcs::from_bytes(v.bytes())
                             .expect("Deserializing into an aggregator value always succeeds");
                         let value = additional_delta_op
                             .apply_to(base)
                             .map_err(PartialVMError::from)?;
-                        *data = serialize(&value).into();
+                        v.set_bytes(serialize(&value).into())
                     },
-                    Deletion { .. } => {
+                    Deletion(..) => {
                         // This case (applying a delta to deleted item) should
                         // never happen. Let's still return an error instead of
                         // panicking.
