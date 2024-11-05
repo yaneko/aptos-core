@@ -908,7 +908,7 @@ mod tests {
         };
 
         let other_db = init_db(&config);
-        let other_executor = BlockExecutor::<AptosVMBlockExecutor>::new(other_db.clone());
+        let other_executor = BlockExecutor::<E>::new(other_db.clone());
 
         let parent_block_id = other_executor.committed_block_id();
         let block_id = HashValue::random();

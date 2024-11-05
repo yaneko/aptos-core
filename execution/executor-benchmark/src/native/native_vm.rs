@@ -28,7 +28,7 @@ use aptos_types::{
     account_config::{
         primary_apt_store, AccountResource, CoinDeposit, CoinInfoResource, CoinRegister,
         CoinStoreResource, CoinWithdraw, ConcurrentSupplyResource, DepositFAEvent,
-        FungibleStoreResource, TypeInfoResource, WithdrawFAEvent,
+        FungibleStoreResource, WithdrawFAEvent,
     },
     block_executor::config::{
         BlockExecutorConfig, BlockExecutorConfigFromOnchain, BlockExecutorLocalConfig,
@@ -825,7 +825,7 @@ impl NativeVMExecutorTask {
                     events.push((
                         CoinRegister {
                             account: AccountAddress::ONE,
-                            type_info: TypeInfoResource::new::<AptosCoinType>()
+                            type_info: DbAccessUtil::new_type_info_resource::<AptosCoinType>()
                                 .map_err(hide_error)?,
                         }
                         .create_event_v2(),

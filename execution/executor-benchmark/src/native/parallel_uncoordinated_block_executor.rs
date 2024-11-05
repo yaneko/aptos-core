@@ -13,7 +13,7 @@ use aptos_types::{
     account_config::{
         primary_apt_store, AccountResource, CoinDeposit, CoinInfoResource, CoinRegister,
         CoinStoreResource, CoinWithdraw, ConcurrentSupplyResource, DepositFAEvent,
-        FungibleStoreResource, TypeInfoResource, WithdrawFAEvent,
+        FungibleStoreResource, WithdrawFAEvent,
     },
     block_executor::config::BlockExecutorConfigFromOnchain,
     contract_event::ContractEvent,
@@ -30,14 +30,12 @@ use aptos_types::{
     AptosCoinType,
 };
 use aptos_vm::VMBlockExecutor;
-use dashmap::{mapref::one::RefMut, DashMap};
+use dashmap::{mapref::one::{Ref, RefMut}, DashMap};
 use once_cell::sync::OnceCell;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use thread_local::ThreadLocal;
 use std::{
-    collections::{BTreeMap, HashMap},
-    hash::RandomState,
-    sync::atomic::{AtomicU64, Ordering},
-    u64,
+    cell::Cell, collections::{BTreeMap, HashMap}, hash::RandomState, sync::atomic::{AtomicU64, Ordering}, u64
 };
 
 /// Executes transactions fully, and produces TransactionOutput (with final WriteSet)
@@ -697,7 +695,7 @@ impl CommonNativeRawTransactionExecutor for NativeRawTransactionExecutor {
                     output.events.push(
                         CoinRegister {
                             account: AccountAddress::ONE,
-                            type_info: TypeInfoResource::new::<AptosCoinType>()?,
+                            type_info: DbAccessUtil::new_type_info_resource::<AptosCoinType>()?,
                         }
                         .create_event_v2(),
                     );
@@ -789,8 +787,15 @@ fn compute_deltas_for_batch(
     deltas
 }
 
+const USE_THREAD_LOCAL_SUPPLY: bool = true;
+
 struct CoinSupply {
-    total_supply: u128,
+    pub total_supply: u128,
+}
+
+struct SupplyWithDecrement {
+    pub base: u128,
+    pub decrement: ThreadLocal<Cell<u128>>,
 }
 
 enum CachedResource {
@@ -800,6 +805,7 @@ enum CachedResource {
     AptCoinStore(CoinStoreResource<AptosCoinType>),
     AptCoinInfo(CoinInfoResource<AptosCoinType>),
     AptCoinSupply(CoinSupply),
+    SupplyDecrement(SupplyWithDecrement),
 }
 
 pub struct NativeValueCacheRawTransactionExecutor {
@@ -876,37 +882,37 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
         state_view: &(impl StateView + Sync),
         _output: &mut IncrementalOutput,
     ) -> Result<()> {
-        let concurrent_supply_rg_tag = &self.db_util.common.concurrent_supply;
-        let cache_key = StateKey::resource(&AccountAddress::TEN, concurrent_supply_rg_tag).unwrap();
+        let cache_key = StateKey::resource(&AccountAddress::TEN, &self.db_util.common.concurrent_supply).unwrap();
 
-        let mut entry = self.cache.entry(cache_key).or_insert_with(|| {
-            let apt_metadata_object_state_key = self
-                .db_util
-                .new_state_key_object_resource_group(&AccountAddress::TEN);
-
-            let mut apt_metadata_object =
-                DbAccessUtil::get_resource_group(&apt_metadata_object_state_key, state_view)
-                    .unwrap()
-                    .unwrap();
-
-            CachedResource::FungibleSupply(
-                bcs::from_bytes::<ConcurrentSupplyResource>(
-                    &apt_metadata_object
-                        .remove(concurrent_supply_rg_tag)
-                        .unwrap(),
-                )
-                .unwrap(),
-            )
-        });
-
-        match entry.value_mut() {
-            CachedResource::FungibleSupply(fungible_supply) => {
-                fungible_supply
-                    .current
-                    .set(fungible_supply.current.get() - gas as u128);
-            },
-            _ => panic!("wrong type"),
-        };
+        if USE_THREAD_LOCAL_SUPPLY {
+            let entry = self.cache_get_or_init(&cache_key, |_key| {
+                let concurrent_supply = self.fetch_concurrent_supply(state_view);
+                CachedResource::SupplyDecrement(SupplyWithDecrement {
+                    base: *concurrent_supply.current.get(),
+                    decrement: ThreadLocal::new(),
+                })
+            });
+            match entry.value() {
+                CachedResource::SupplyDecrement(SupplyWithDecrement { decrement, .. }) => {
+                    let decrement_cell = decrement.get_or_default();
+                    decrement_cell.set(decrement_cell.get() + gas as u128);
+                },
+                _ => panic!("wrong type"),
+            }
+        } else {
+            let mut entry = self.cache_get_mut_or_init(&cache_key, |_key| {
+                let concurrent_supply = self.fetch_concurrent_supply(state_view);
+                CachedResource::FungibleSupply(concurrent_supply)
+            });
+            match entry.value_mut() {
+                CachedResource::FungibleSupply(fungible_supply) => {
+                    fungible_supply
+                        .current
+                        .set(fungible_supply.current.get() - gas as u128);
+                },
+                _ => panic!("wrong type"),
+            };
+        }
 
         Ok(())
     }
@@ -934,20 +940,40 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
             total_supply_state_key
         });
 
-        let mut total_supply_entry = self.cache_get_mut_or_init(total_supply_state_key, |key| {
-            CachedResource::AptCoinSupply(CoinSupply {
-                total_supply: DbAccessUtil::get_value::<u128>(key, state_view)
-                    .unwrap()
-                    .unwrap(),
-            })
-        });
+        if USE_THREAD_LOCAL_SUPPLY {
+            let total_supply_entry = self.cache_get_or_init(total_supply_state_key, |key| {
+                CachedResource::SupplyDecrement(SupplyWithDecrement {
+                    base: DbAccessUtil::get_value::<u128>(key, state_view)
+                        .unwrap()
+                        .unwrap(),
+                    decrement: ThreadLocal::new()
+                })
+            });
+            match total_supply_entry.value() {
+                CachedResource::SupplyDecrement(SupplyWithDecrement { decrement, .. }) => {
+                    let decrement_cell = decrement.get_or_default();
+                    decrement_cell.set(decrement_cell.get() + gas as u128);
+                },
+                _ => panic!("wrong type"),
+            }
+        } else {
+            let mut total_supply_entry = self.cache_get_mut_or_init(total_supply_state_key, |key| {
+                CachedResource::AptCoinSupply(CoinSupply {
+                    total_supply: DbAccessUtil::get_value::<u128>(key, state_view)
+                        .unwrap()
+                        .unwrap(),
+                })
+            });
 
-        match total_supply_entry.value_mut() {
-            CachedResource::AptCoinSupply(coin_supply) => {
-                coin_supply.total_supply -= gas as u128;
-            },
-            _ => panic!("wrong type"),
-        };
+            match total_supply_entry.value_mut() {
+                CachedResource::AptCoinSupply(coin_supply) => {
+                    coin_supply.total_supply -= gas as u128;
+                },
+                _ => panic!("wrong type"),
+            };
+        }
+
+
         Ok(())
     }
 
@@ -1003,6 +1029,19 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
 }
 
 impl NativeValueCacheRawTransactionExecutor {
+    fn cache_get_or_init<'a>(
+        &'a self,
+        key: &StateKey,
+        init_value: impl FnOnce(&StateKey) -> CachedResource,
+    ) -> Ref<'a, StateKey, CachedResource, RandomState> {
+        // Data in cache is going to be the hot path, so short-circuit here to avoid cloning the key.
+        if let Some(ref_mut) = self.cache.get(key) {
+            return ref_mut;
+        }
+
+        self.cache.entry(key.clone()).or_insert(init_value(key)).downgrade()
+    }
+
     fn cache_get_mut_or_init<'a>(
         &'a self,
         key: &StateKey,
@@ -1014,6 +1053,27 @@ impl NativeValueCacheRawTransactionExecutor {
         }
 
         self.cache.entry(key.clone()).or_insert(init_value(key))
+    }
+
+    fn fetch_concurrent_supply(&self, state_view: &(impl StateView + Sync)) -> ConcurrentSupplyResource {
+        let concurrent_supply_rg_tag = &self.db_util.common.concurrent_supply;
+
+        let apt_metadata_object_state_key = self
+            .db_util
+            .new_state_key_object_resource_group(&AccountAddress::TEN);
+
+        let mut apt_metadata_object =
+            DbAccessUtil::get_resource_group(&apt_metadata_object_state_key, state_view)
+                .unwrap()
+                .unwrap();
+
+        let concurrent_supply = bcs::from_bytes::<ConcurrentSupplyResource>(
+            &apt_metadata_object
+                .remove(concurrent_supply_rg_tag)
+                .unwrap(),
+        )
+        .unwrap();
+        concurrent_supply
     }
 
     fn update_fa_balance(
@@ -1094,6 +1154,7 @@ impl NativeValueCacheRawTransactionExecutor {
 pub struct NativeNoStorageRawTransactionExecutor {
     seq_nums: DashMap<AccountAddress, u64>,
     balances: DashMap<AccountAddress, u64>,
+    total_supply_decrement: ThreadLocal<Cell<u128>>,
     total_supply: AtomicU64,
 }
 
@@ -1186,6 +1247,7 @@ impl RawTransactionExecutor for NativeNoStorageRawTransactionExecutor {
         Self {
             seq_nums: DashMap::new(),
             balances: DashMap::new(),
+            total_supply_decrement: ThreadLocal::new(),
             total_supply: AtomicU64::new(u64::MAX),
         }
     }
@@ -1200,7 +1262,13 @@ impl RawTransactionExecutor for NativeNoStorageRawTransactionExecutor {
     ) -> Result<TransactionOutput> {
         let gas_units = 4;
         let gas = gas_units * 100;
-        self.total_supply.fetch_sub(gas, Ordering::Relaxed);
+
+        if USE_THREAD_LOCAL_SUPPLY {
+            let decrement_cell = self.total_supply_decrement.get_or_default();
+            decrement_cell.set(decrement_cell.get() + gas as u128);
+        } else {
+            self.total_supply.fetch_sub(gas, Ordering::Relaxed);
+        }
 
         let output = IncrementalOutput::new();
         let (sender, sequence_number) = match txn {
@@ -1244,7 +1312,6 @@ impl RawTransactionExecutor for NativeNoStorageRawTransactionExecutor {
                 amounts,
                 ..
             } => {
-
                 let mut deltas = compute_deltas_for_batch(recipients, amounts, sender);
 
                 let amount_from_sender = -deltas.remove(&sender).unwrap_or(0);
@@ -1266,7 +1333,6 @@ impl RawTransactionExecutor for NativeNoStorageRawTransactionExecutor {
         };
 
         self.seq_nums.insert(sender, sequence_number);
-        account.sequence_number = sequence_number + 1;
         output.into_success_output(gas)
     }
 }

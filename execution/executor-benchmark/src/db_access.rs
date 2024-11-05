@@ -6,13 +6,14 @@ use aptos_types::{
     account_address::AccountAddress,
     account_config::{
         AccountResource, CoinInfoResource, CoinStoreResource, ConcurrentSupplyResource,
-        FungibleStoreResource, ObjectCoreResource, ObjectGroupResource,
+        FungibleStoreResource, ObjectCoreResource, ObjectGroupResource, TypeInfoResource,
     },
     event::{EventHandle, EventKey},
     state_store::{state_key::StateKey, StateView},
     write_set::TOTAL_SUPPLY_STATE_KEY,
     AptosCoinType, CoinType,
 };
+use itertools::Itertools;
 use move_core_types::{
     identifier::Identifier,
     language_storage::{StructTag, TypeTag},
@@ -167,5 +168,29 @@ impl DbAccessUtil {
 
     pub fn new_object_core(address: AccountAddress, owner: AccountAddress) -> ObjectCoreResource {
         ObjectCoreResource::new(owner, false, EventHandle::new(EventKey::new(1, address), 0))
+    }
+
+    pub fn new_type_info_resource<T: MoveStructType>() -> anyhow::Result<TypeInfoResource> {
+        let struct_tag = T::struct_tag();
+        Ok(TypeInfoResource {
+            account_address: struct_tag.address,
+            module_name: bcs::to_bytes(&struct_tag.module.to_string())?,
+            struct_name: bcs::to_bytes(
+                &if struct_tag.type_args.is_empty() {
+                    struct_tag.name.to_string()
+                } else {
+                    format!(
+                        "{}<{}>",
+                        struct_tag.name,
+                        struct_tag
+                            .type_args
+                            .iter()
+                            .map(|v| v.to_string())
+                            .join(", ")
+                    )
+                    .to_string()
+                },
+            )?,
+        })
     }
 }
