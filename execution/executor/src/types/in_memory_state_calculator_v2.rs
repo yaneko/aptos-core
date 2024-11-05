@@ -23,6 +23,7 @@ use aptos_types::{
     write_set::WriteSet,
 };
 use dashmap::DashMap;
+use itertools::Itertools;
 use rayon::prelude::*;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 
@@ -93,18 +94,15 @@ impl InMemoryStateCalculatorV2 {
         } = state_cache;
         assert!(frozen_base.smt.is_the_same(&parent_state.current));
 
-        let mut write_sets = write_sets.into_iter();
+        let write_sets = write_sets.into_iter().collect_vec();
         let (updates_before_last_checkpoint, updates_after_last_checkpoint) =
             if let Some(index) = last_checkpoint_index {
                 (
-                    Self::calculate_updates(write_sets.by_ref().take(index + 1)),
-                    Self::calculate_updates(write_sets),
+                    Self::calculate_updates(&write_sets[0..=index]),
+                    Self::calculate_updates(&write_sets[index + 1..]),
                 )
             } else {
-                (
-                    Self::calculate_updates([]),
-                    Self::calculate_updates(write_sets),
-                )
+                (HashMap::new(), Self::calculate_updates(&write_sets))
             };
         let all_updates = {
             let _timer = OTHER_TIMERS.timer_with(&["combine_two_updates"]);
@@ -213,13 +211,11 @@ impl InMemoryStateCalculatorV2 {
         ))
     }
 
-    fn calculate_updates<'a>(
-        write_sets: impl IntoIterator<Item = &'a WriteSet>,
-    ) -> HashMap<StateKey, Option<StateValue>> {
+    fn calculate_updates(write_sets: &[&WriteSet]) -> HashMap<StateKey, Option<StateValue>> {
         let _timer = OTHER_TIMERS.timer_with(&["calculate_updates"]);
         write_sets
-            .into_iter()
-            .flat_map(WriteSet::state_updates)
+            .par_iter()
+            .flat_map(|w| w.state_updates().collect_vec())
             .collect()
     }
 
