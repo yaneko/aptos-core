@@ -104,6 +104,7 @@ impl ExecutionPipeline {
         &self,
         block: PipelinedBlock,
         block_window: OrderedBlockWindow,
+        max_block_txns: u64,
         metadata: BlockMetadataExt,
         parent_block_id: HashValue,
         txn_generator: BlockPreparer,
@@ -118,6 +119,7 @@ impl ExecutionPipeline {
             .send(PrepareBlockCommand {
                 block,
                 block_window,
+                max_block_txns,
                 metadata,
                 block_executor_onchain_config,
                 parent_block_id,
@@ -153,6 +155,7 @@ impl ExecutionPipeline {
         let PrepareBlockCommand {
             block,
             block_window,
+            max_block_txns,
             metadata,
             block_executor_onchain_config,
             parent_block_id,
@@ -194,6 +197,7 @@ impl ExecutionPipeline {
             execute_block_tx
                 .send(ExecuteBlockCommand {
                     input_txns,
+                    max_block_txns,
                     max_txns_to_execute,
                     pipelined_block: block,
                     block: (block_id, sig_verified_txns).into(),
@@ -231,6 +235,7 @@ impl ExecutionPipeline {
     ) {
         'outer: while let Some(ExecuteBlockCommand {
             input_txns: _,
+            max_block_txns,
             max_txns_to_execute,
             pipelined_block,
             block,
@@ -331,12 +336,11 @@ impl ExecutionPipeline {
             } else {
                 txns.len()
             };
-            let num_txns_to_execute = if let Some(max_user_txns_to_execute) = max_txns_to_execute {
-                txns.len()
-                    .min(num_validator_txns.saturating_add(max_user_txns_to_execute as usize))
-            } else {
-                txns.len()
-            };
+            let mut num_txns_to_execute = txns.len().min(max_block_txns as usize);
+            if let Some(max_user_txns_to_execute) = max_txns_to_execute {
+                num_txns_to_execute = num_txns_to_execute
+                    .min(num_validator_txns.saturating_add(max_user_txns_to_execute as usize));
+            }
             let blocking_txns_provider = Arc::new(BlockingTxnsProvider::new(num_txns_to_execute));
             let blocking_txns_writer = blocking_txns_provider.clone();
             let join_shuffle = tokio::task::spawn_blocking(move || {
@@ -583,6 +587,7 @@ impl ExecutionPipeline {
 struct PrepareBlockCommand {
     block: PipelinedBlock,
     block_window: OrderedBlockWindow,
+    max_block_txns: u64,
     metadata: BlockMetadataExt,
     block_executor_onchain_config: BlockExecutorConfigFromOnchain,
     // The parent block id.
@@ -596,6 +601,7 @@ struct PrepareBlockCommand {
 
 struct ExecuteBlockCommand {
     input_txns: Vec<SignedTransaction>,
+    max_block_txns: u64,
     max_txns_to_execute: Option<u64>,
     pipelined_block: PipelinedBlock,
     block: ExecutableBlock,

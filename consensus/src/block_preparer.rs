@@ -155,12 +155,8 @@ impl BlockPreparer {
         let txn_deduper = self.txn_deduper.clone();
         let block_id = block.id();
         let block_timestamp_usecs = block.timestamp_usecs();
-        let max_prepared_block_txns =
-            if let Some(max_txns_from_block_to_execute) = max_txns_from_block_to_execute {
-                max_txns_from_block_to_execute
-            } else {
-                self.max_block_txns * 2
-            };
+        // Always use max_block_txns * 2 regardless of max_txns_from_block_to_execute for better shuffling
+        let max_prepared_block_txns = self.max_block_txns * 2;
         // Transaction filtering, deduplication and shuffling are CPU intensive tasks, so we run them in a blocking task.
         let result = tokio::task::spawn_blocking(move || {
             // stable sort to ensure batches with same gas are in the same order
