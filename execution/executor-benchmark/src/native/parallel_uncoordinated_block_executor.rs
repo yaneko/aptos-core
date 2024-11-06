@@ -30,13 +30,20 @@ use aptos_types::{
     AptosCoinType,
 };
 use aptos_vm::VMBlockExecutor;
-use dashmap::{mapref::one::{Ref, RefMut}, DashMap};
+use dashmap::{
+    mapref::one::{Ref, RefMut},
+    DashMap,
+};
 use once_cell::sync::OnceCell;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use thread_local::ThreadLocal;
 use std::{
-    cell::Cell, collections::{BTreeMap, HashMap}, hash::RandomState, sync::atomic::{AtomicU64, Ordering}, u64
+    cell::Cell,
+    collections::{BTreeMap, HashMap},
+    hash::RandomState,
+    sync::atomic::{AtomicU64, Ordering},
+    u64,
 };
+use thread_local::ThreadLocal;
 
 /// Executes transactions fully, and produces TransactionOutput (with final WriteSet)
 /// (unlike execution within BlockSTM that produces non-materialized VMChangeSet)
@@ -794,6 +801,7 @@ struct CoinSupply {
 }
 
 struct SupplyWithDecrement {
+    #[allow(dead_code)]
     pub base: u128,
     pub decrement: ThreadLocal<Cell<u128>>,
 }
@@ -882,7 +890,9 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
         state_view: &(impl StateView + Sync),
         _output: &mut IncrementalOutput,
     ) -> Result<()> {
-        let cache_key = StateKey::resource(&AccountAddress::TEN, &self.db_util.common.concurrent_supply).unwrap();
+        let cache_key =
+            StateKey::resource(&AccountAddress::TEN, &self.db_util.common.concurrent_supply)
+                .unwrap();
 
         if USE_THREAD_LOCAL_SUPPLY {
             let entry = self.cache_get_or_init(&cache_key, |_key| {
@@ -946,7 +956,7 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
                     base: DbAccessUtil::get_value::<u128>(key, state_view)
                         .unwrap()
                         .unwrap(),
-                    decrement: ThreadLocal::new()
+                    decrement: ThreadLocal::new(),
                 })
             });
             match total_supply_entry.value() {
@@ -957,13 +967,14 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
                 _ => panic!("wrong type"),
             }
         } else {
-            let mut total_supply_entry = self.cache_get_mut_or_init(total_supply_state_key, |key| {
-                CachedResource::AptCoinSupply(CoinSupply {
-                    total_supply: DbAccessUtil::get_value::<u128>(key, state_view)
-                        .unwrap()
-                        .unwrap(),
-                })
-            });
+            let mut total_supply_entry =
+                self.cache_get_mut_or_init(total_supply_state_key, |key| {
+                    CachedResource::AptCoinSupply(CoinSupply {
+                        total_supply: DbAccessUtil::get_value::<u128>(key, state_view)
+                            .unwrap()
+                            .unwrap(),
+                    })
+                });
 
             match total_supply_entry.value_mut() {
                 CachedResource::AptCoinSupply(coin_supply) => {
@@ -972,7 +983,6 @@ impl CommonNativeRawTransactionExecutor for NativeValueCacheRawTransactionExecut
                 _ => panic!("wrong type"),
             };
         }
-
 
         Ok(())
     }
@@ -1039,7 +1049,10 @@ impl NativeValueCacheRawTransactionExecutor {
             return ref_mut;
         }
 
-        self.cache.entry(key.clone()).or_insert(init_value(key)).downgrade()
+        self.cache
+            .entry(key.clone())
+            .or_insert(init_value(key))
+            .downgrade()
     }
 
     fn cache_get_mut_or_init<'a>(
@@ -1055,7 +1068,10 @@ impl NativeValueCacheRawTransactionExecutor {
         self.cache.entry(key.clone()).or_insert(init_value(key))
     }
 
-    fn fetch_concurrent_supply(&self, state_view: &(impl StateView + Sync)) -> ConcurrentSupplyResource {
+    fn fetch_concurrent_supply(
+        &self,
+        state_view: &(impl StateView + Sync),
+    ) -> ConcurrentSupplyResource {
         let concurrent_supply_rg_tag = &self.db_util.common.concurrent_supply;
 
         let apt_metadata_object_state_key = self
@@ -1067,13 +1083,12 @@ impl NativeValueCacheRawTransactionExecutor {
                 .unwrap()
                 .unwrap();
 
-        let concurrent_supply = bcs::from_bytes::<ConcurrentSupplyResource>(
+        bcs::from_bytes::<ConcurrentSupplyResource>(
             &apt_metadata_object
                 .remove(concurrent_supply_rg_tag)
                 .unwrap(),
         )
-        .unwrap();
-        concurrent_supply
+        .unwrap()
     }
 
     fn update_fa_balance(

@@ -16,8 +16,6 @@ use aptos_aggregator::{
     delta_math::DeltaHistory,
 };
 use aptos_block_executor::{
-    code_cache_global::ImmutableModuleCache,
-    errors::BlockExecutionError,
     task::{ExecutionStatus, ExecutorTask},
     txn_commit_hook::NoOpTransactionCommitHook,
 };
@@ -34,8 +32,6 @@ use aptos_types::{
         BlockExecutorConfig, BlockExecutorConfigFromOnchain, BlockExecutorLocalConfig,
     },
     contract_event::ContractEvent,
-    error::PanicError,
-    executable::ExecutableTestType,
     fee_statement::FeeStatement,
     move_utils::move_event_v2::MoveEventV2Type,
     on_chain_config::FeatureFlag,
@@ -47,7 +43,10 @@ use aptos_types::{
     write_set::WriteOp,
     AptosCoinType,
 };
-use aptos_vm::{block_executor::AptosTransactionOutput, VMBlockExecutor};
+use aptos_vm::{
+    block_executor::{AptosBlockExecutorWrapper, AptosTransactionOutput},
+    VMBlockExecutor,
+};
 use aptos_vm_environment::environment::AptosEnvironment;
 use aptos_vm_types::{
     abstract_write_op::{
@@ -63,7 +62,7 @@ use bytes::Bytes;
 use move_core_types::{
     language_storage::StructTag,
     value::{IdentifierMappingKind, MoveStructLayout, MoveTypeLayout},
-    vm_status::{StatusCode, VMStatus},
+    vm_status::VMStatus,
 };
 use move_vm_types::delayed_values::delayed_field_id::DelayedFieldID;
 use serde::{de::DeserializeOwned, Serialize};
@@ -88,60 +87,20 @@ impl VMBlockExecutor for NativeVMBlockExecutor {
         state_view: &(impl StateView + Sync),
         onchain_config: BlockExecutorConfigFromOnchain,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
-        Self::execute_block_impl(transactions, state_view, BlockExecutorConfig {
-            local: BlockExecutorLocalConfig {
-                concurrency_level: NativeConfig::get_concurrency_level(),
-                allow_fallback: false,
-                discard_failed_blocks: false,
-            },
-            onchain: onchain_config,
-        })
-    }
-}
-
-impl NativeVMBlockExecutor {
-    pub fn execute_block_impl<S: StateView + Sync>(
-        signature_verified_block: &[SignatureVerifiedTransaction],
-        state_view: &S,
-        config: BlockExecutorConfig,
-    ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
-        let executor = aptos_block_executor::executor::BlockExecutor::<
-            SignatureVerifiedTransaction,
-            NativeVMExecutorTask,
-            S,
-            NoOpTransactionCommitHook<AptosTransactionOutput, VMStatus>,
-            ExecutableTestType,
-        >::new(
-            config,
+        AptosBlockExecutorWrapper::<NativeVMExecutorTask>::execute_block_on_thread_pool_without_global_module_cache::<_, NoOpTransactionCommitHook<AptosTransactionOutput, VMStatus>>(
             Arc::clone(&NATIVE_EXECUTOR_POOL),
-            Arc::new(ImmutableModuleCache::empty()),
-            None,
-        );
-
-        let environment = AptosEnvironment::new_with_delayed_field_optimization_enabled(state_view);
-        let ret = executor.execute_block(environment, signature_verified_block, state_view);
-        match ret {
-            Ok(block_output) => {
-                let (transaction_outputs, block_end_info) = block_output.into_inner();
-                let output_vec: Vec<_> = transaction_outputs
-                    .into_iter()
-                    .map(|output| output.take_output())
-                    .collect();
-
-                // Flush the speculative logs of the committed transactions.
-                // let pos = output_vec.partition_point(|o| !o.status().is_retry());
-
-                Ok(BlockOutput::new(output_vec, block_end_info))
+            transactions,
+            state_view,
+            BlockExecutorConfig {
+                local: BlockExecutorLocalConfig {
+                    concurrency_level: NativeConfig::get_concurrency_level(),
+                    allow_fallback: false,
+                    discard_failed_blocks: false,
+                },
+                onchain: onchain_config,
             },
-            Err(BlockExecutionError::FatalBlockExecutorError(PanicError::CodeInvariantError(
-                err_msg,
-            ))) => Err(VMStatus::Error {
-                status_code: StatusCode::DELAYED_FIELD_OR_BLOCKSTM_CODE_INVARIANT_ERROR,
-                sub_status: None,
-                message: Some(err_msg),
-            }),
-            Err(BlockExecutionError::FatalVMError(err)) => Err(err),
-        }
+            None
+        )
     }
 }
 

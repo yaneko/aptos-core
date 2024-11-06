@@ -47,7 +47,7 @@ use aptos_types::{
     AptosCoinType, CoinType,
 };
 use aptos_vm::{
-    block_executor::{AptosTransactionOutput, BlockAptosVM},
+    block_executor::{AptosTransactionOutput, AptosVMBlockExecutorWrapper},
     data_cache::AsMoveResolver,
     gas::make_prod_gas_meter,
     move_vm_ext::{MoveVmExt, SessionExt, SessionId},
@@ -636,7 +636,7 @@ impl FakeExecutor {
             },
             onchain: onchain_config,
         };
-        BlockAptosVM::execute_block_on_thread_pool_without_global_module_cache::<
+        AptosVMBlockExecutorWrapper::execute_block_on_thread_pool_without_global_module_cache::<
             _,
             NoOpTransactionCommitHook<AptosTransactionOutput, VMStatus>,
         >(

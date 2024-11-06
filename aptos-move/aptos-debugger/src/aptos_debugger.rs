@@ -23,7 +23,7 @@ use aptos_validator_interface::{
     AptosValidatorInterface, DBDebuggerInterface, DebuggerStateView, RestDebuggerInterface,
 };
 use aptos_vm::{
-    block_executor::{AptosTransactionOutput, BlockAptosVM},
+    block_executor::{AptosTransactionOutput, AptosVMBlockExecutorWrapper},
     data_cache::AsMoveResolver,
     AptosVM,
 };
@@ -428,7 +428,10 @@ fn execute_block_no_limit(
     state_view: &DebuggerStateView,
     concurrency_level: usize,
 ) -> Result<Vec<TransactionOutput>, VMStatus> {
-    BlockAptosVM::execute_block::<_, NoOpTransactionCommitHook<AptosTransactionOutput, VMStatus>>(
+    AptosVMBlockExecutorWrapper::execute_block::<
+        _,
+        NoOpTransactionCommitHook<AptosTransactionOutput, VMStatus>,
+    >(
         sig_verified_txns,
         state_view,
         BlockExecutorConfig {

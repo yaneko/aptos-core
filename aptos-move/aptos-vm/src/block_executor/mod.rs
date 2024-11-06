@@ -4,17 +4,17 @@
 
 pub(crate) mod vm_wrapper;
 
-use crate::{
-    block_executor::vm_wrapper::AptosExecutorTask,
-    counters::{BLOCK_EXECUTOR_CONCURRENCY, BLOCK_EXECUTOR_EXECUTE_BLOCK_SECONDS},
-};
+use crate::counters::{BLOCK_EXECUTOR_CONCURRENCY, BLOCK_EXECUTOR_EXECUTE_BLOCK_SECONDS};
 use aptos_aggregator::{
     delayed_change::DelayedChange, delta_change_set::DeltaOp, resolver::TAggregatorV1View,
 };
 use aptos_block_executor::{
-    code_cache_global::ImmutableModuleCache, errors::BlockExecutionError, executor::BlockExecutor,
-    task::TransactionOutput as BlockExecutorTransactionOutput,
-    txn_commit_hook::TransactionCommitHook, types::InputOutputKey,
+    code_cache_global::ImmutableModuleCache,
+    errors::BlockExecutionError,
+    executor::BlockExecutor,
+    task::{ExecutorTask, TransactionOutput as BlockExecutorTransactionOutput},
+    txn_commit_hook::TransactionCommitHook,
+    types::InputOutputKey,
 };
 use aptos_infallible::Mutex;
 use aptos_types::{
@@ -49,9 +49,11 @@ use once_cell::sync::{Lazy, OnceCell};
 use std::{
     collections::{BTreeMap, HashSet},
     hash::Hash,
+    marker::PhantomData,
     ops::Deref,
     sync::Arc,
 };
+use vm_wrapper::AptosExecutorTask;
 
 static RAYON_EXEC_POOL: Lazy<Arc<rayon::ThreadPool>> = Lazy::new(|| {
     Arc::new(
@@ -138,7 +140,7 @@ impl AptosTransactionOutput {
         self.committed_output.get().unwrap()
     }
 
-    pub fn take_output(mut self) -> TransactionOutput {
+    fn take_output(mut self) -> TransactionOutput {
         match self.committed_output.take() {
             Some(output) => output,
             // TODO: revisit whether we should always get it via committed, or o.w. create a
@@ -445,9 +447,26 @@ impl BlockExecutorTransactionOutput for AptosTransactionOutput {
     }
 }
 
-pub struct BlockAptosVM;
+pub struct AptosBlockExecutorWrapper<
+    E: ExecutorTask<
+        Txn = SignatureVerifiedTransaction,
+        Error = VMStatus,
+        Output = AptosTransactionOutput,
+        Environment = AptosEnvironment,
+    >,
+> {
+    _phantom: PhantomData<E>,
+}
 
-impl BlockAptosVM {
+impl<
+        E: ExecutorTask<
+            Txn = SignatureVerifiedTransaction,
+            Error = VMStatus,
+            Output = AptosTransactionOutput,
+            Environment = AptosEnvironment,
+        >,
+    > AptosBlockExecutorWrapper<E>
+{
     fn execute_block_on_thread_pool<
         S: StateView + Sync,
         L: TransactionCommitHook<Output = AptosTransactionOutput>,
@@ -476,18 +495,13 @@ impl BlockAptosVM {
             global_module_cache.as_ref(),
         )?;
 
-        let executor = BlockExecutor::<
-            SignatureVerifiedTransaction,
-            AptosExecutorTask,
-            S,
-            L,
-            ExecutableTestType,
-        >::new(
-            config,
-            executor_thread_pool,
-            global_module_cache,
-            transaction_commit_listener,
-        );
+        let executor =
+            BlockExecutor::<SignatureVerifiedTransaction, E, S, L, ExecutableTestType>::new(
+                config,
+                executor_thread_pool,
+                global_module_cache,
+                transaction_commit_listener,
+            );
 
         let ret = executor.execute_block(environment, signature_verified_block, state_view);
         match ret {
@@ -560,6 +574,9 @@ impl BlockAptosVM {
         )
     }
 }
+
+// Same as AptosBlockExecutorWrapper with AptosExecutorTask
+pub type AptosVMBlockExecutorWrapper = AptosBlockExecutorWrapper<AptosExecutorTask>;
 
 #[cfg(test)]
 mod test {
