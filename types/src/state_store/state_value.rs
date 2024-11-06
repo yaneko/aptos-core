@@ -11,7 +11,6 @@ use aptos_crypto::{
 };
 use aptos_crypto_derive::{BCSCryptoHash, CryptoHasher};
 use bytes::Bytes;
-use once_cell::sync::OnceCell;
 #[cfg(any(test, feature = "fuzzing"))]
 use proptest::{arbitrary::Arbitrary, prelude::*};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -164,7 +163,7 @@ impl StateValueMetadata {
 #[derive(Clone, Debug, CryptoHasher)]
 pub struct StateValue {
     inner: StateValueInner,
-    hash: OnceCell<HashValue>,
+    // hash: OnceCell<HashValue>,
 }
 
 impl PartialEq for StateValue {
@@ -235,8 +234,9 @@ impl<'de> Deserialize<'de> for StateValue {
         D: Deserializer<'de>,
     {
         let inner = PersistedStateValue::deserialize(deserializer)?.into_in_mem_form();
-        let hash = OnceCell::new();
-        Ok(Self { inner, hash })
+        // let hash = OnceCell::new();
+        // Ok(Self { inner, hash })
+        Ok( Self { inner } )
     }
 }
 
@@ -256,8 +256,9 @@ impl StateValue {
 
     pub fn new_with_metadata(data: Bytes, metadata: StateValueMetadata) -> Self {
         let inner = StateValueInner { data, metadata };
-        let hash = OnceCell::new();
-        Self { inner, hash }
+        // let hash = OnceCell::new();
+        // Self { inner, hash }
+        Self { inner }
     }
 
     pub fn size(&self) -> usize {
@@ -286,7 +287,7 @@ impl StateValue {
 
     pub fn set_bytes(&mut self, data: Bytes) {
         self.inner.data = data;
-        self.hash = OnceCell::new();
+        // self.hash = OnceCell::new();
     }
 
     pub fn metadata(&self) -> &StateValueMetadata {
@@ -325,9 +326,7 @@ impl CryptoHash for StateValue {
     type Hasher = StateValueHasher;
 
     fn hash(&self) -> HashValue {
-        *self
-            .hash
-            .get_or_init(|| CryptoHash::hash(&self.inner.to_persistable_form()))
+        CryptoHash::hash(&self.inner.to_persistable_form())
     }
 }
 
