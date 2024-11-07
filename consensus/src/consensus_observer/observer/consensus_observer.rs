@@ -29,16 +29,20 @@ use crate::{
     dag::DagCommitSigner,
     network::{IncomingCommitRequest, IncomingRandGenRequest},
     network_interface::CommitMessage,
-    pipeline::execution_client::TExecutionClient,
+    pipeline::{execution_client::TExecutionClient, pipeline_builder::PipelineBuilder},
 };
 use aptos_channels::{aptos_channel, aptos_channel::Receiver, message_queues::QueueStyle};
 use aptos_config::{
     config::{ConsensusObserverConfig, NodeConfig},
     network_id::PeerNetworkId,
 };
-use aptos_consensus_types::{pipeline, pipelined_block::PipelinedBlock};
+use aptos_consensus_types::{
+    pipeline,
+    pipelined_block::{PipelineFutures, PipelinedBlock},
+};
 use aptos_crypto::{bls12381, Genesis};
 use aptos_event_notifications::{DbBackedOnChainConfig, ReconfigNotificationListener};
+use aptos_executor_types::state_compute_result::StateComputeResult;
 use aptos_infallible::Mutex;
 use aptos_logger::{debug, error, info, warn};
 use aptos_network::{
@@ -90,6 +94,9 @@ pub struct ConsensusObserver {
 
     // The consensus observer subscription manager
     subscription_manager: SubscriptionManager,
+
+    // Pipeline builder
+    pipeline_builder: Option<PipelineBuilder>,
 }
 
 impl ConsensusObserver {
@@ -152,6 +159,7 @@ impl ConsensusObserver {
             observer_fallback_manager,
             state_sync_manager,
             subscription_manager,
+            pipeline_builder: None,
         }
     }
 
@@ -337,10 +345,22 @@ impl ConsensusObserver {
     /// Returns the last ordered block
     fn get_last_ordered_block(&self) -> BlockInfo {
         if let Some(last_ordered_block) = self.ordered_block_store.lock().get_last_ordered_block() {
-            last_ordered_block
+            last_ordered_block.block_info()
         } else {
             // Return the root ledger info
             self.active_observer_state.root().commit_info().clone()
+        }
+    }
+
+    fn get_last_pipeline_fut(&self) -> PipelineFutures {
+        if let Some(last_ordered_block) = self.ordered_block_store.lock().get_last_ordered_block() {
+            last_ordered_block.pipeline_fut().unwrap()
+        } else {
+            // Return the root ledger info
+            self.pipeline_builder.as_ref().unwrap().build_root(
+                StateComputeResult::new_dummy(),
+                self.active_observer_state.root().clone(),
+            )
         }
     }
 
@@ -755,6 +775,20 @@ impl ConsensusObserver {
                 metrics::ORDERED_BLOCK_LABEL,
             );
 
+            for block in ordered_block.blocks() {
+                let commit_callback = self.active_observer_state.create_commit_callback_v2(
+                    self.ordered_block_store.clone(),
+                    self.block_payload_store.clone(),
+                );
+                let (fut, tx, abort_handle) = self.pipeline_builder.as_ref().unwrap().build(
+                    self.get_last_pipeline_fut(),
+                    Arc::new(block.block().clone()),
+                    commit_callback,
+                );
+                block.set_pipeline_fut(fut);
+                block.set_pipeline_tx(tx);
+                block.set_pipeline_abort_handles(abort_handle);
+            }
             // Insert the ordered block into the pending blocks
             self.ordered_block_store
                 .lock()
@@ -962,7 +996,7 @@ impl ConsensusObserver {
             .start_epoch(
                 Some(sk),
                 epoch_state.clone(),
-                dummy_signer,
+                dummy_signer.clone(),
                 payload_manager,
                 &consensus_config,
                 &execution_config,
@@ -973,6 +1007,7 @@ impl ConsensusObserver {
                 0,
             )
             .await;
+        self.pipeline_builder = Some(self.execution_client.pipeline_builder(signer))
     }
 
     /// Starts the consensus observer loop that processes incoming

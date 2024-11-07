@@ -9,10 +9,10 @@ use crate::consensus_observer::{
     network::observer_message::{CommitDecision, OrderedBlock},
 };
 use aptos_config::config::ConsensusObserverConfig;
-use aptos_consensus_types::common::Round;
+use aptos_consensus_types::{common::Round, pipelined_block::PipelinedBlock};
 use aptos_logger::{debug, warn};
 use aptos_types::{block_info::BlockInfo, ledger_info::LedgerInfoWithSignatures};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 /// A simple struct to store ordered blocks
 pub struct OrderedBlockStore {
@@ -54,10 +54,10 @@ impl OrderedBlockStore {
     }
 
     /// Returns the last ordered block (if any)
-    pub fn get_last_ordered_block(&self) -> Option<BlockInfo> {
+    pub fn get_last_ordered_block(&self) -> Option<Arc<PipelinedBlock>> {
         self.ordered_blocks
             .last_key_value()
-            .map(|(_, (ordered_block, _))| ordered_block.last_block().block_info())
+            .map(|(_, (ordered_block, _))| ordered_block.last_block())
     }
 
     /// Returns the ordered block for the given epoch and round (if any)

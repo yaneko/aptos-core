@@ -108,12 +108,31 @@ impl ActiveObserverState {
         let root = self.root.clone();
 
         // Create the commit callback
-        Box::new(move |blocks, ledger_info: LedgerInfoWithSignatures| {
+        Box::new(move |_blocks, ledger_info: LedgerInfoWithSignatures| {
             handle_committed_blocks(
                 pending_ordered_blocks,
                 block_payload_store,
                 root,
-                blocks,
+                // blocks,
+                ledger_info,
+            );
+        })
+    }
+
+    pub fn create_commit_callback_v2(
+        &self,
+        pending_ordered_blocks: Arc<Mutex<OrderedBlockStore>>,
+        block_payload_store: Arc<Mutex<BlockPayloadStore>>,
+    ) -> Box<dyn FnOnce(LedgerInfoWithSignatures) + Send + Sync> {
+        // Clone the root pointer
+        let root = self.root.clone();
+
+        // Create the commit callback
+        Box::new(move |ledger_info: LedgerInfoWithSignatures| {
+            handle_committed_blocks(
+                pending_ordered_blocks,
+                block_payload_store,
+                root,
                 ledger_info,
             );
         })
@@ -285,11 +304,14 @@ fn handle_committed_blocks(
     pending_ordered_blocks: Arc<Mutex<OrderedBlockStore>>,
     block_payload_store: Arc<Mutex<BlockPayloadStore>>,
     root: Arc<Mutex<LedgerInfoWithSignatures>>,
-    blocks: &[Arc<PipelinedBlock>],
+    // blocks: &[Arc<PipelinedBlock>],
     ledger_info: LedgerInfoWithSignatures,
 ) {
     // Remove the committed blocks from the payload and pending stores
-    block_payload_store.lock().remove_committed_blocks(blocks);
+    block_payload_store.lock().remove_committed_blocks(
+        ledger_info.commit_info().epoch(),
+        ledger_info.commit_info().round(),
+    );
     pending_ordered_blocks
         .lock()
         .remove_blocks_for_commit(&ledger_info);
