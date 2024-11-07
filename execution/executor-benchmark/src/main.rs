@@ -244,6 +244,9 @@ enum BlockExecutorTypeOpt {
 
 #[derive(Parser, Debug)]
 struct Opt {
+    #[clap(long)]
+    use_keyless_accounts: bool,
+
     #[clap(long, default_value_t = 10000)]
     block_size: usize,
 
@@ -443,6 +446,7 @@ where
                 opt.enable_storage_sharding,
                 opt.pipeline_opt.pipeline_config(),
                 get_init_features(enable_feature, disable_feature),
+                opt.use_keyless_accounts,
             );
         },
         Command::RunExecutor {
@@ -504,6 +508,7 @@ where
                 opt.enable_storage_sharding,
                 opt.pipeline_opt.pipeline_config(),
                 get_init_features(enable_feature, disable_feature),
+                opt.use_keyless_accounts,
             );
         },
         Command::AddAccounts {
@@ -523,6 +528,7 @@ where
                 opt.enable_storage_sharding,
                 opt.pipeline_opt.pipeline_config(),
                 Features::default(),
+                opt.use_keyless_accounts,
             );
         },
     }

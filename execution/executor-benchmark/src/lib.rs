@@ -119,6 +119,7 @@ pub fn run_benchmark<V>(
     enable_storage_sharding: bool,
     pipeline_config: PipelineConfig,
     init_features: Features,
+    is_keyless: bool,
 ) where
     V: TransactionBlockExecutor + 'static,
 {
@@ -163,6 +164,7 @@ pub fn run_benchmark<V>(
             db.reader.clone(),
             num_accounts_to_be_loaded,
             num_accounts_to_skip,
+            is_keyless,
         );
         let (main_signer_accounts, burner_accounts) =
             accounts_cache.split(num_main_signer_accounts);
@@ -219,6 +221,7 @@ pub fn run_benchmark<V>(
         source_dir,
         Some(num_accounts_to_load),
         pipeline_config.num_generator_workers,
+        is_keyless,
     );
 
     let mut overall_measuring = OverallMeasuring::start();
@@ -340,6 +343,7 @@ pub fn add_accounts<V>(
     enable_storage_sharding: bool,
     pipeline_config: PipelineConfig,
     init_features: Features,
+    is_keyless: bool,
 ) where
     V: TransactionBlockExecutor + 'static,
 {
@@ -360,6 +364,7 @@ pub fn add_accounts<V>(
         enable_storage_sharding,
         pipeline_config,
         init_features,
+        is_keyless,
     );
 }
 
@@ -374,6 +379,7 @@ fn add_accounts_impl<V>(
     enable_storage_sharding: bool,
     pipeline_config: PipelineConfig,
     init_features: Features,
+    is_keyless: bool,
 ) where
     V: TransactionBlockExecutor + 'static,
 {
@@ -400,6 +406,7 @@ fn add_accounts_impl<V>(
         &source_dir,
         None,
         pipeline_config.num_generator_workers,
+        is_keyless,
     );
 
     let start_time = Instant::now();
@@ -409,6 +416,7 @@ fn add_accounts_impl<V>(
         num_new_accounts,
         init_account_balance,
         block_size,
+        is_keyless,
     );
     generator.drop_sender();
     pipeline.start_pipeline_processing();
@@ -905,6 +913,7 @@ mod tests {
             false,
             PipelineConfig::default(),
             features.clone(),
+            false,
         );
 
         println!("run_benchmark");
@@ -935,6 +944,7 @@ mod tests {
             false,
             PipelineConfig::default(),
             features,
+            false,
         );
     }
 
