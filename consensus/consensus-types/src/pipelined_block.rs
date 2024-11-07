@@ -127,9 +127,9 @@ pub struct PipelinedBlock {
     #[derivative(PartialEq = "ignore")]
     pipeline_futures: Arc<Mutex<Option<PipelineFutures>>>,
     #[derivative(PartialEq = "ignore")]
-    pipeline_tx: Option<Arc<Mutex<PipelineInputTx>>>,
+    pipeline_tx: Arc<Mutex<Option<PipelineInputTx>>>,
     #[derivative(PartialEq = "ignore")]
-    pipeline_abort_handle: Option<Vec<AbortHandle>>,
+    pipeline_abort_handle: Arc<Mutex<Option<Vec<AbortHandle>>>>,
 }
 
 impl Serialize for PipelinedBlock {
@@ -294,8 +294,8 @@ impl PipelinedBlock {
             execution_summary: Arc::new(OnceCell::new()),
             pre_commit_fut: Arc::new(Mutex::new(None)),
             pipeline_futures: Arc::new(Mutex::new(None)),
-            pipeline_tx: None,
-            pipeline_abort_handle: None,
+            pipeline_tx: Arc::new(Mutex::new(None)),
+            pipeline_abort_handle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -406,24 +406,24 @@ impl PipelinedBlock {
         self.pipeline_futures.lock().clone()
     }
 
-    pub fn set_pipeline_fut(&mut self, pipeline_futures: PipelineFutures) {
+    pub fn set_pipeline_fut(&self, pipeline_futures: PipelineFutures) {
         *self.pipeline_futures.lock() = Some(pipeline_futures);
     }
 
-    pub fn set_pipeline_tx(&mut self, pipeline_tx: PipelineInputTx) {
-        self.pipeline_tx = Some(Arc::new(Mutex::new(pipeline_tx)));
+    pub fn set_pipeline_tx(&self, pipeline_tx: PipelineInputTx) {
+        *self.pipeline_tx.lock() = Some(pipeline_tx);
     }
 
-    pub fn set_pipeline_abort_handles(&mut self, abort_handles: Vec<AbortHandle>) {
-        self.pipeline_abort_handle = Some(abort_handles);
+    pub fn set_pipeline_abort_handles(&self, abort_handles: Vec<AbortHandle>) {
+        *self.pipeline_abort_handle.lock() = Some(abort_handles);
     }
 
-    pub fn pipeline_tx(&self) -> Option<&Arc<Mutex<PipelineInputTx>>> {
-        self.pipeline_tx.as_ref()
+    pub fn pipeline_tx(&self) -> Arc<Mutex<Option<PipelineInputTx>>> {
+        self.pipeline_tx.clone()
     }
 
     pub fn abort_pipeline(&self) -> Option<PipelineFutures> {
-        if let Some(abort_handles) = &self.pipeline_abort_handle {
+        if let Some(abort_handles) = self.pipeline_abort_handle.lock().take() {
             for handle in abort_handles {
                 handle.abort();
             }

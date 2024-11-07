@@ -104,10 +104,8 @@ impl StatelessPipeline for ExecutionSchedulePhase {
         // .map_err(ExecutorError::internal_err)
         // .and_then(|res| async { res });
         for b in &ordered_blocks {
-            if let Some(tx) = b.pipeline_tx().unwrap().lock().rand_tx.take() {
-                let _ = tx.send(b.randomness().cloned());
-            } else {
-                println!("?????????????????");
+            if let Some(tx) = b.pipeline_tx().lock().as_mut() {
+                tx.rand_tx.take().map(|tx| tx.send(b.randomness().cloned()));
             }
         }
 

@@ -192,7 +192,7 @@ impl BlockStore {
         ));
         assert_eq!(result.root_hash(), root_metadata.accu_hash);
 
-        let mut pipelined_root_block = PipelinedBlock::new(
+        let pipelined_root_block = PipelinedBlock::new(
             *root_block,
             vec![],
             // Create a dummy state_compute_result with necessary fields filled in.
@@ -272,11 +272,6 @@ impl BlockStore {
         assert!(!blocks_to_commit.is_empty());
 
         // send order proof to pipeline
-        for block in &blocks_to_commit {
-            let pipeline_tx = block.pipeline_tx().unwrap().lock();
-            let _ = pipeline_tx.order_proof_tx.send(());
-        }
-
         let block_tree = self.inner.clone();
         let storage = self.storage.clone();
         let finality_proof_clone = finality_proof.clone();
@@ -377,7 +372,7 @@ impl BlockStore {
                 .prefetch_payload_data(payload, block.timestamp_usecs());
         }
 
-        let mut pipelined_block = PipelinedBlock::new_ordered(block.clone());
+        let pipelined_block = PipelinedBlock::new_ordered(block.clone());
 
         // build pipeline
         let parent_block = self
