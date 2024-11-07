@@ -24,7 +24,7 @@ use aptos_logger::prelude::*;
 use aptos_types::{
     account_address::AccountAddress,
     mempool_status::{MempoolStatus, MempoolStatusCode},
-    transaction::{use_case::UseCaseKey, SignedTransaction},
+    transaction::{use_case::UseCaseKey, ReplayProtector, SignedTransaction},
     vm_status::DiscardedVMStatus,
 };
 use std::{
@@ -32,6 +32,8 @@ use std::{
     sync::atomic::Ordering,
     time::{Duration, Instant, SystemTime},
 };
+
+use super::AccountSequenceNumberInfo;
 
 pub struct Mempool {
     // Stores the metadata of all transactions in mempool (of all states).
@@ -276,7 +278,7 @@ impl Mempool {
         &mut self,
         txn: SignedTransaction,
         ranking_score: u64,
-        db_sequence_number: u64,
+        account_sequence_number: AccountSequenceNumberInfo,
         timeline_state: TimelineState,
         client_submitted: bool,
         // The time at which the transaction was inserted into the mempool of the
@@ -287,19 +289,34 @@ impl Mempool {
     ) -> MempoolStatus {
         trace!(
             LogSchema::new(LogEntry::AddTxn)
-                .txns(TxnsLog::new_txn(txn.sender(), txn.sequence_number())),
-            committed_seq_number = db_sequence_number
+                .txns(TxnsLog::new_txn(txn.sender(), txn.replay_protector())),
+            committed_seq_number = account_sequence_number
         );
 
-        // don't accept old transactions (e.g. seq is less than account's current seq_number)
-        if txn.sequence_number() < db_sequence_number {
-            return MempoolStatus::new(MempoolStatusCode::InvalidSeqNumber).with_message(format!(
-                "transaction sequence number is {}, current sequence number is  {}",
-                txn.sequence_number(),
-                db_sequence_number,
-            ));
-        }
-
+        if let ReplayProtector::SequenceNumber(txn_seq_num) = txn.replay_protector() {
+            // don't accept old transactions (e.g. seq is less than account's current seq_number)
+            match &account_sequence_number {
+                AccountSequenceNumberInfo::Required(account_sequence_number) => {
+                    if txn_seq_num < account_sequence_number {
+                        return MempoolStatus::new(MempoolStatusCode::InvalidSeqNumber).with_message(
+                            format!(
+                                "transaction sequence number is {}, current sequence number is  {}",
+                                txn_seq_num, account_sequence_number,
+                            ),
+                        );
+                    }
+                },
+                AccountSequenceNumberInfo::NotRequired => {
+                    return MempoolStatus::new(MempoolStatusCode::InvalidSeqNumber).with_message(
+                        format!(
+                            "transaction has sequence number {}, but not sequence number provided for sender's account",
+                            txn_seq_num,
+                        ),
+                    );
+                }
+            }
+        };
+       
         let now = SystemTime::now();
         let expiration_time =
             aptos_infallible::duration_since_epoch_at(&now) + self.system_transaction_timeout;
@@ -310,7 +327,7 @@ impl Mempool {
             expiration_time,
             ranking_score,
             timeline_state,
-            db_sequence_number,
+            account_sequence_number,
             now,
             client_submitted,
             priority.clone(),
