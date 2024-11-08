@@ -2464,7 +2464,8 @@ impl VectorRef {
     /// In the `to` vector, elements after the `insert_position` are moved the the right to make space for new elements
     /// (i.e. range is inserted, while the order of the rest of the elements is kept).
     ///
-    /// Move prevents from having two mutable references to the same value, so `from` and `to` vectors are guaranted to be distinct.
+    /// Precondition for this function is that `from` and `to` vectors are required to be distinct
+    /// Move will guaranteee that invariant, because it prevents from having two mutable references to the same value.
     pub fn move_range(
         from_self: &Self,
         removal_position: usize,
@@ -2478,6 +2479,8 @@ impl VectorRef {
 
         // potentially unnecessary as native call should've checked the types already
         // (unlike other vector functions that are bytecodes)
+        // TODO: potentially unnecessary, can be removed - as these are only required for
+        // bytecode instructions, as types are checked when native functions are called.
         check_elem_layout(type_param, from_c)?;
         check_elem_layout(type_param, to_c)?;
 
