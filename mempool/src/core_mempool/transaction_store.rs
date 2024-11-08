@@ -625,14 +625,14 @@ impl TransactionStore {
         hash: &HashValue,
     ) {
         let mut txn_to_remove = None;
-        if let Some((indexed_account, indexed_sequence_number)) = self.hash_index.get(hash) {
-            if account == indexed_account && sequence_number == *indexed_sequence_number {
-                txn_to_remove = self.get_mempool_txn(account, sequence_number).cloned();
+        if let Some((indexed_account, indexed_replay_protector)) = self.hash_index.get(hash) {
+            if account == indexed_account && replay_protector == *indexed_replay_protector {
+                txn_to_remove = self.get_mempool_txn(account, replay_protector).cloned();
             }
         }
         if let Some(txn_to_remove) = txn_to_remove {
             if let Some(txns) = self.transactions.get_mut(account) {
-                txns.remove(&sequence_number);
+                txns.remove(&replay_protector);
             }
             self.index_remove(&txn_to_remove);
 
@@ -640,7 +640,7 @@ impl TransactionStore {
                 let mut txns_log = TxnsLog::new();
                 txns_log.add(
                     txn_to_remove.get_sender(),
-                    txn_to_remove.sequence_info.transaction_sequence_number,
+                    txn_to_remove.sequence_info.transaction_replay_protector,
                 );
                 trace!(LogSchema::new(LogEntry::CleanRejectedTxn).txns(txns_log));
             }

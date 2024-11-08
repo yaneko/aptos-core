@@ -53,24 +53,24 @@ impl Mempool {
     }
 
     /// This function will be called once the transaction has been stored.
-    pub(crate) fn commit_transaction(&mut self, sender: &AccountAddress, sequence_number: u64) {
+    pub(crate) fn commit_transaction(&mut self, sender: &AccountAddress, replay_protector: ReplayProtector) {
         self.transactions
-            .commit_transaction(sender, sequence_number);
+            .commit_transaction(sender, replay_protector);
     }
 
     pub(crate) fn log_commit_transaction(
         &self,
         sender: &AccountAddress,
-        sequence_number: u64,
+        replay_protector: ReplayProtector,
         tracked_use_case: Option<(UseCaseKey, &String)>,
         block_timestamp: Duration,
     ) {
         trace!(
-            LogSchema::new(LogEntry::RemoveTxn).txns(TxnsLog::new_txn(*sender, sequence_number)),
+            LogSchema::new(LogEntry::RemoveTxn).txns(TxnsLog::new_txn(*sender, replay_protector)),
             is_rejected = false
         );
-        self.log_commit_latency(*sender, sequence_number, tracked_use_case, block_timestamp);
-        if let Some(ranking_score) = self.transactions.get_ranking_score(sender, sequence_number) {
+        self.log_commit_latency(*sender, replay_protector, tracked_use_case, block_timestamp);
+        if let Some(ranking_score) = self.transactions.get_ranking_score(sender, replay_protector) {
             counters::core_mempool_txn_ranking_score(
                 counters::REMOVE_LABEL,
                 counters::COMMIT_ACCEPTED_LABEL,
@@ -142,10 +142,10 @@ impl Mempool {
         }
     }
 
-    fn log_consensus_pulled_latency(&self, account: AccountAddress, sequence_number: u64) {
+    fn log_consensus_pulled_latency(&self, account: AccountAddress, replay_protector: ReplayProtector) {
         if let Some((insertion_info, bucket, priority)) = self
             .transactions
-            .get_insertion_info_and_bucket(&account, sequence_number)
+            .get_insertion_info_and_bucket(&account, replay_protector)
         {
             let prev_count = insertion_info
                 .consensus_pulled_counter
@@ -233,13 +233,13 @@ impl Mempool {
     fn log_commit_latency(
         &self,
         account: AccountAddress,
-        sequence_number: u64,
+        replay_protector: ReplayProtector,
         tracked_use_case: Option<(UseCaseKey, &String)>,
         block_timestamp: Duration,
     ) {
         if let Some((insertion_info, bucket, priority)) = self
             .transactions
-            .get_insertion_info_and_bucket(&account, sequence_number)
+            .get_insertion_info_and_bucket(&account, replay_protector)
         {
             Self::log_txn_latency(
                 insertion_info,
@@ -537,7 +537,7 @@ impl Mempool {
         counters::mempool_service_transactions(counters::GET_BLOCK_LABEL, block.len());
         counters::MEMPOOL_SERVICE_BYTES_GET_BLOCK.observe(total_bytes as f64);
         for transaction in &block {
-            self.log_consensus_pulled_latency(transaction.sender(), transaction.sequence_number());
+            self.log_consensus_pulled_latency(transaction.sender(), transaction.replay_protector());
         }
         block
     }
