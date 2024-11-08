@@ -83,16 +83,16 @@ impl Mempool {
     fn log_reject_transaction(
         &self,
         sender: &AccountAddress,
-        sequence_number: u64,
+        replay_protector: ReplayProtector,
         reason_label: &'static str,
     ) {
         trace!(
-            LogSchema::new(LogEntry::RemoveTxn).txns(TxnsLog::new_txn(*sender, sequence_number)),
+            LogSchema::new(LogEntry::RemoveTxn).txns(TxnsLog::new_txn(*sender, replay_protector)),
             is_rejected = true,
             label = reason_label,
         );
-        self.log_commit_rejected_latency(*sender, sequence_number, reason_label);
-        if let Some(ranking_score) = self.transactions.get_ranking_score(sender, sequence_number) {
+        self.log_commit_rejected_latency(*sender, replay_protector, reason_label);
+        if let Some(ranking_score) = self.transactions.get_ranking_score(sender, replay_protector) {
             counters::core_mempool_txn_ranking_score(
                 counters::REMOVE_LABEL,
                 reason_label,
@@ -105,12 +105,12 @@ impl Mempool {
     pub(crate) fn reject_transaction(
         &mut self,
         sender: &AccountAddress,
-        sequence_number: u64,
+        replay_protector: ReplayProtector,
         hash: &HashValue,
         reason: &DiscardedVMStatus,
     ) {
         if *reason == DiscardedVMStatus::SEQUENCE_NUMBER_TOO_NEW {
-            self.log_reject_transaction(sender, sequence_number, counters::COMMIT_IGNORED_LABEL);
+            self.log_reject_transaction(sender, replay_protector, counters::COMMIT_IGNORED_LABEL);
             // Do not remove the transaction from mempool
             return;
         }
@@ -120,9 +120,9 @@ impl Mempool {
         } else {
             counters::COMMIT_REJECTED_LABEL
         };
-        self.log_reject_transaction(sender, sequence_number, label);
+        self.log_reject_transaction(sender, replay_protector, label);
         self.transactions
-            .reject_transaction(sender, sequence_number, hash);
+            .reject_transaction(sender, replay_protector, hash);
     }
 
     pub(crate) fn log_txn_latency(
@@ -165,12 +165,12 @@ impl Mempool {
     fn log_commit_rejected_latency(
         &self,
         account: AccountAddress,
-        sequence_number: u64,
+        replay_protector: ReplayProtector,
         stage: &'static str,
     ) {
         if let Some((insertion_info, bucket, priority)) = self
             .transactions
-            .get_insertion_info_and_bucket(&account, sequence_number)
+            .get_insertion_info_and_bucket(&account, replay_protector)
         {
             Self::log_txn_latency(insertion_info, bucket.as_str(), stage, priority.as_str());
         }
@@ -438,7 +438,7 @@ impl Mempool {
             let tx_seq = txn.sequence_number.transaction_sequence_number;
             let txn_in_sequence = tx_seq > 0
                 && Self::txn_was_chosen(txn.address, tx_seq - 1, &inserted, &exclude_transactions);
-            let account_sequence_number = self.transactions.get_sequence_number(&txn.address);
+            let account_sequence_number = self.transactions.get_account_sequence_number(&txn.address);
             // include transaction if it's "next" for given account or
             // we've already sent its ancestor to Consensus.
             if txn_in_sequence || account_sequence_number == Some(&tx_seq) {

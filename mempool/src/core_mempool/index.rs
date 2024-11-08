@@ -13,6 +13,7 @@ use aptos_consensus_types::common::TransactionSummary;
 use aptos_crypto::HashValue;
 use aptos_logger::prelude::*;
 use aptos_types::account_address::AccountAddress;
+use aptos_types::transaction::ReplayProtector;
 use rand::seq::SliceRandom;
 use std::{
     cmp::Ordering,
@@ -23,7 +24,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-pub type AccountTransactions = BTreeMap<u64, MempoolTransaction>;
+pub type AccountTransactions = BTreeMap<ReplayProtector, MempoolTransaction>;
 
 /// PriorityIndex represents the main Priority Queue in Mempool.
 /// It's used to form the transaction block for Consensus.
@@ -153,7 +154,8 @@ impl TTLIndex {
         let ttl_key = TTLOrderingKey {
             expiration_time: now,
             address: AccountAddress::ZERO,
-            sequence_number: 0,
+            // TODO: Check how the comparision works between sequence numbers and nonces work
+            replay_protector: ReplayProtector::SequenceNumber(0),
         };
 
         let mut active = self.data.split_off(&ttl_key);
@@ -167,7 +169,7 @@ impl TTLIndex {
         TTLOrderingKey {
             expiration_time: (self.get_expiration_time)(txn),
             address: txn.get_sender(),
-            sequence_number: txn.sequence_info.transaction_sequence_number,
+            replay_protector: txn.sequence_info.transaction_replay_protector,
         }
     }
 
@@ -185,7 +187,7 @@ impl TTLIndex {
 pub struct TTLOrderingKey {
     pub expiration_time: Duration,
     pub address: AccountAddress,
-    pub sequence_number: u64,
+    pub replay_protector: ReplayProtector,
 }
 
 /// Be very careful with this, to not break the partial ordering.
@@ -195,7 +197,10 @@ impl Ord for TTLOrderingKey {
     fn cmp(&self, other: &TTLOrderingKey) -> Ordering {
         match self.expiration_time.cmp(&other.expiration_time) {
             Ordering::Equal => {
-                (&self.address, self.sequence_number).cmp(&(&other.address, other.sequence_number))
+                match self.address.cmp(&other.address) {
+                    Ordering::Equal => self.replay_protector.cmp(&other.replay_protector),
+                    ordering => ordering,
+                }
             },
             ordering => ordering,
         }
