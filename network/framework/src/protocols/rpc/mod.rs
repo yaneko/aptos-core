@@ -53,7 +53,10 @@ use crate::{
     logging::NetworkSchema,
     protocols::{
         network::{ReceivedMessage, SerializedRequest},
-        wire::messaging::v1::{NetworkMessage, Priority, RequestId, RpcRequest, RpcResponse},
+        wire::messaging::v1::{
+            metadata::{MessageMetadata, NetworkMessageWithMetadata},
+            NetworkMessage, Priority, RequestId, RpcRequest, RpcResponse,
+        },
     },
     ProtocolId,
 };
@@ -166,16 +169,67 @@ impl OutboundRpcRequest {
         }
     }
 
-    /// Consumes the request and returns the protocol id, data, channel, and timeout
+    /// Transforms the message into an RPC network message with metadata,
+    /// and returns the response sender channel.
+    pub fn into_network_message(
+        self,
+        request_id: RequestId,
+    ) -> (
+        NetworkMessageWithMetadata,
+        oneshot::Sender<Result<Bytes, RpcError>>,
+    ) {
+        // Create the RPC network message
+        let network_message = NetworkMessage::RpcRequest(RpcRequest {
+            protocol_id: self.protocol_id,
+            request_id,
+            priority: Priority::default(),
+            raw_request: Vec::from(self.data.as_ref()),
+        });
+
+        // Create the network message with metadata
+        let message_metadata =
+            MessageMetadata::new(self.protocol_id, Some(self.application_send_time));
+        let message_with_metadata =
+            NetworkMessageWithMetadata::new(message_metadata, network_message);
+
+        (message_with_metadata, self.res_tx)
+    }
+
+    /// Returns true iff the request has been canceled (e.g., the
+    /// application layer has dropped the response channel).
+    pub fn is_canceled(&self) -> bool {
+        self.res_tx.is_canceled()
+    }
+
+    /// Consumes the request and returns the individual parts.
+    /// Note: this is only for testing purposes (but, it cannot be marked
+    /// as `#[cfg(test)]` because of several non-wrapped test utils).
     pub fn into_parts(
         self,
     ) -> (
+        SystemTime,
         ProtocolId,
         Bytes,
         oneshot::Sender<Result<Bytes, RpcError>>,
         Duration,
     ) {
-        (self.protocol_id, self.data, self.res_tx, self.timeout)
+        (
+            self.application_send_time,
+            self.protocol_id,
+            self.data,
+            self.res_tx,
+            self.timeout,
+        )
+    }
+
+    /// Returns the response sender for the request (consuming the entire request)
+    pub fn response_sender(self) -> oneshot::Sender<Result<Bytes, RpcError>> {
+        self.res_tx
+    }
+
+    /// Returns the timeout of the RPC request
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 }
 
@@ -361,7 +415,7 @@ impl InboundRpcs {
     /// the outbound write queue.
     pub fn send_outbound_response(
         &mut self,
-        write_reqs_tx: &mut aptos_channel::Sender<(), NetworkMessage>,
+        write_reqs_tx: &mut aptos_channel::Sender<(), NetworkMessageWithMetadata>,
         maybe_response: Result<(RpcResponse, ProtocolId), RpcError>,
     ) -> Result<(), RpcError> {
         let network_context = &self.network_context;
@@ -471,18 +525,11 @@ impl OutboundRpcs {
     pub fn handle_outbound_request(
         &mut self,
         request: OutboundRpcRequest,
-        write_reqs_tx: &mut aptos_channel::Sender<(), NetworkMessage>,
+        write_reqs_tx: &mut aptos_channel::Sender<(), NetworkMessageWithMetadata>,
     ) -> Result<(), RpcError> {
+        // Drop the outbound request if the application layer has already canceled it
         let network_context = &self.network_context;
-        let peer_id = &self.remote_peer_id;
-
-        // Unpack request.
-        let (protocol_id, request_data, mut application_response_tx, timeout) =
-            request.into_parts();
-        let req_len = request_data.len() as u64;
-
-        // Drop the outbound request if the application layer has already canceled.
-        if application_response_tx.is_canceled() {
+        if request.is_canceled() {
             counters::rpc_messages(
                 network_context,
                 REQUEST_LABEL,
@@ -490,10 +537,11 @@ impl OutboundRpcs {
                 CANCELED_LABEL,
             )
             .inc();
+
             return Err(RpcError::UnexpectedResponseChannelCancel);
         }
 
-        // Drop new outbound requests if our completion queue is at capacity.
+        // Drop new outbound requests if our completion queue is at capacity
         if self.outbound_rpc_tasks.len() == self.max_concurrent_outbound_rpcs as usize {
             counters::rpc_messages(
                 network_context,
@@ -502,14 +550,20 @@ impl OutboundRpcs {
                 DECLINED_LABEL,
             )
             .inc();
-            // Notify application that their request was dropped due to capacity.
-            let err = Err(RpcError::TooManyPending(self.max_concurrent_outbound_rpcs));
-            let _ = application_response_tx.send(err);
+
+            // Notify the application that their request was dropped due to capacity
+            let error = Err(RpcError::TooManyPending(self.max_concurrent_outbound_rpcs));
+            let _ = request.response_sender().send(error);
+
             return Err(RpcError::TooManyPending(self.max_concurrent_outbound_rpcs));
         }
 
+        // Generate a new RPC request ID
         let request_id = self.request_id_gen.next();
 
+        // Log the outbound request and request ID
+        let peer_id = &self.remote_peer_id;
+        let protocol_id = request.protocol_id();
         trace!(
             NetworkSchema::new(network_context).remote_peer(peer_id),
             "{} Sending outbound rpc request with request_id {} and protocol_id {} to {}",
@@ -519,21 +573,21 @@ impl OutboundRpcs {
             peer_id.short_str(),
         );
 
-        // Start timer to collect outbound RPC latency.
+        // Convert the message into a network message with metadata
+        let request_length = request.data().len() as u64;
+        let timeout = request.timeout();
+        let (network_message, mut application_response_tx) =
+            request.into_network_message(request_id);
+
+        // Start the timer to collect the outbound RPC latency
         let timer =
             counters::outbound_rpc_request_latency(network_context, protocol_id).start_timer();
 
-        // Enqueue rpc request message onto outbound write queue.
-        let message = NetworkMessage::RpcRequest(RpcRequest {
-            protocol_id,
-            request_id,
-            priority: Priority::default(),
-            raw_request: Vec::from(request_data.as_ref()),
-        });
-        write_reqs_tx.push((), message)?;
+        // Enqueue the message onto the outbound write queue
+        write_reqs_tx.push((), network_message)?;
 
         // Update the outbound RPC request metrics
-        self.update_outbound_rpc_request_metrics(protocol_id, req_len);
+        self.update_outbound_rpc_request_metrics(protocol_id, request_length);
 
         // Create channel over which response is delivered to outbound_rpc_task.
         let (response_tx, response_rx) = oneshot::channel::<RpcResponse>();
